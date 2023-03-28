@@ -1,8 +1,31 @@
+/*++
+
+Module Name:
+
+    codemeter.c
+
+Abstract:
+
+    A program for revising files (source code files by design). The revision includes
+    counting the number of files, their extensions, the number of lines of code
+    in the files (with and without comments).
+
+Author:
+
+    glebs 28-Mar-2023
+
+Revision History:
+
+--*/
+
+
 #include <stdio.h>
 
 #define WIN32_LEAN_AND_MEAN
 
+#include <shlobj.h>   
 #include <shlwapi.h>
+#include <stdbool.h>
 #include <Windows.h>
 
 
@@ -16,28 +39,81 @@
 // This global variable contains the path of the root directory where
 // the user requested the revision.
 //
-static PCWSTR WorkingDirectory = NULL;
+static PCWSTR RootRevisionDirectory = NULL;
+
+//
+// This global variable contains the total number of files in RootRevisionDirectory.
+//
+static int TotalFilesCount = 0;
 
 
 void
-SelectDirectoryToRevise (void)
-/*
-
-Not implemented.
-TODO.
-
-*/
-{
-}
-
-int
-wmain (int      argc,
-       wchar_t *argv[])
+InitDirectoryRevision (
+    _In_ PCWSTR path
+    )
 /*++
 
 Routine Description:
 
-    This function is the entry point of the program.
+    This function initiates a revision of the folder. The revision includes
+    counting the number of files, their extensions, the number of lines of code
+    in the files (with and without comments).
+
+Arguments:
+
+    path - Supplies a path of the root directory where the user requested the revision.
+
+Return Value:
+
+
+
+--*/
+{
+    
+}
+
+bool
+SelectDirectoryToRevise (
+    _Out_ PCWSTR path
+    )
+/*++
+
+Routine Description:
+
+    This function opens a folder selection dialog box.
+
+Arguments:
+
+    [Out] path - Selected directory path.
+    
+Return Value:
+
+    true - Success.
+
+    false - Failure.
+
+--*/
+{
+    //
+    // Not implemented.
+    // TODO.
+    //
+
+    printf ("\033[33mSelectDirectoryToRevise is not implemented.\n\033[0m");
+    return false;
+}
+
+int
+wmain (
+    int      argc,
+    wchar_t *argv[]
+    )
+/*++
+
+Routine Description:
+
+    This function is the entry point of the program. This is where command line
+    arguments are handled.
     
 Arguments:
 
@@ -47,20 +123,27 @@ Arguments:
         
 Return Value:
 
-    0 - Success.
-    
-    1 - Failure.
+    For now we always return 0.
  
 --*/
 {
-    int status = 0;
-
     if (argc <= 1) {
         //
         // The command line argument is not passed, so we open a dialog box to select
         // the folder in which user wants to perform the revision.
         //
-        SelectDirectoryToRevise ();
+        if (SelectDirectoryToRevise (RootRevisionDirectory)) {
+            //
+            // Can revise...
+            //
+            InitDirectoryRevision (RootRevisionDirectory);
+        }
+        else {
+            //
+            // Folder selection failed. Report and return.
+            //
+            printf ("\033[31mERROR Provided folder path \"%ls\" is invalid.\033[0m", RootRevisionDirectory);
+        }
     }
     else {
         //
@@ -77,29 +160,26 @@ Return Value:
             StrCmpW (argv[1], L"/HELP") == 0 ||
             StrCmpW (argv[1], L"?") == 0) {
             //
-            // Print help.
+            // Print help and return.
             //
             printf ("Usage:\n\n"
                     "CodeMeter.exe <Provide here the path to a directory>\n");
-            status = 0;
-            goto Exit;
         }
         else {
             if (!PathIsDirectoryW (argv[1])) {
                 //
-                // Invalid path provided.
+                // Invalid path provided. Report and return.
                 //
-                printf ("\033[31mThe provided folder path \"%ls\" is invalid.\033[0m", argv[1]);
-                status = 1;
-                goto Exit;
+                printf ("\033[31mERROR Provided folder path \"%ls\" is invalid.\033[0m", argv[1]);
             }
             else {
-                
+                //
+                // Can revise...
+                //
+                InitDirectoryRevision (argv[1]);
             }
         }
     }
 
-
-Exit:
-    return status;
+    return 0;
 }
