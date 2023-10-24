@@ -43,7 +43,7 @@ int wmain(int argc, PWCHAR *argv)
     /*
      * Process the command line arguments if any.
      */
-    if (argc <= 1) {
+    if (argc <= -1) {
         /*
          * The command line arguments were not passed at all, so a folder selection dialog
          * should be opened where the user can select a directory to perform the revision.
@@ -57,7 +57,8 @@ int wmain(int argc, PWCHAR *argv)
         /*
          * Prepend L"\\?\" to the `argv[1]` to avoid the obsolete MAX_PATH limitation.
          */
-        revisionPath = RevStringPrepend(argv[1], L"\\\\?\\");
+        PWCHAR testPath = L"C:\\Users\\Glebs\\Downloads";
+        revisionPath = RevStringPrepend(testPath/*argv[1]*/, MAX_PATH_FIX);
         if (revisionPath == NULL) {
             RevLogError("Failed to normalize the revision path (RevStringPrepend failed).");
             status = -1;
@@ -67,7 +68,7 @@ int wmain(int argc, PWCHAR *argv)
         /*
          * Then append L"\\*" to enumerate the entire directory.
          */
-        revisionPath = RevStringAppend(revisionPath, L"\\\\*");
+        revisionPath = RevStringAppend(revisionPath, ASTERISK);
         if (revisionPath == NULL) {
             RevLogError("Failed to normalize the revision path (RevStringAppend failed).");
             status = -1;

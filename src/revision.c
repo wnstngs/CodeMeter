@@ -24,10 +24,12 @@ Author:
 
 #include "codemeter.h"
 
-PWCHAR RevStringAppend(
-    _In_ PWCHAR String1,
-    _In_ PWCHAR String2
-)
+_Ret_maybenull_
+PWCHAR
+RevStringAppend(
+    _In_z_ PWCHAR String1,
+    _In_z_ PWCHAR String2
+    )
 {
     SIZE_T string1Length, string2Length, resultStringLength;
     PWCHAR result;
@@ -70,10 +72,12 @@ Exit:
     return result;
 }
 
-PWCHAR RevStringPrepend(
-    _In_ PWCHAR String1,
-    _In_ PWCHAR String2
-)
+_Ret_maybenull_
+PWCHAR
+RevStringPrepend(
+    _In_z_ PWCHAR String1,
+    _In_z_ PWCHAR String2
+    )
 {
     SIZE_T string1Length, string2Length, resultStringLength;
     PWCHAR result;
@@ -122,11 +126,11 @@ Exit:
     return result;
 }
 
-BOOL RevInitialize(
-    _In_
-    PREVISION_INIT_PARAMS InitParams,
+BOOL
+RevInitialize(
+    _In_ PREVISION_INIT_PARAMS InitParams,
     _Out_ PREVISION Revision
-)
+    )
 {
     BOOL status = TRUE;
 
@@ -148,9 +152,10 @@ Exit:
     return status;
 }
 
-BOOL RevStart(
+BOOL
+RevStart(
     _In_ PREVISION Revision
-)
+    )
 {
     BOOL status = TRUE;
 
@@ -166,8 +171,9 @@ Exit:
     return status;
 }
 
-BOOL RevpEnumerateRecursively(
-    _In_ PWCHAR Path
+BOOL
+RevpEnumerateRecursively(
+    _In_z_ PWCHAR RootDirectoryPath
     )
 {
     BOOL status = TRUE;
@@ -175,47 +181,73 @@ BOOL RevpEnumerateRecursively(
     HANDLE findFile = INVALID_HANDLE_VALUE;
     WIN32_FIND_DATAW findFileData;
     PWCHAR revisionSubpath = NULL;
+    PWCHAR searchPath = NULL;
 
-    if (Path == NULL) {
+    if (RootDirectoryPath == NULL) {
         RevLogError("Invalid parameters.");
         status = FALSE;
         goto Exit;
     }
 
-    findFile = FindFirstFileW(Path,
+    /*
+     * Create the search pattern:
+     *  Each directory path should indicate that we are examining all files,
+     *  Windows asks you to add an asterisk for this purpose.
+     */
+    searchPath = RevStringAppend(RootDirectoryPath,
+                                 ASTERISK);
+    if (searchPath == NULL) {
+        RevLogError("Failed to normalize the revision subdirectory path "
+                    "(RevStringAppend failed).");
+        status = FALSE;
+        goto Exit;
+    }
+
+    findFile = FindFirstFileW(searchPath,
                               &findFileData);
+
+    free(searchPath);
 
     if (findFile == INVALID_HANDLE_VALUE) {
         lastKnownWin32Error = GetLastError();
-        RevLogError("Failed to find a file named \"%ls\" to start the enumeration. The last known error: %lu",
-                    Path,
+        RevLogError("Failed to find a file named \"%ls\" to start the enumeration. "
+                    "The last known error: %lu",
+                    RootDirectoryPath,
                     lastKnownWin32Error);
         status = FALSE;
         goto Exit;
     }
 
     do {
-        if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            /*
-             * Found a subdirectory, run the enumeration recursively.
-             */
+        if (wcscmp(findFileData.cFileName, L".") == 0 &&
+            wcscmp(findFileData.cFileName, L"..") == 0) {
 
             /*
-             * Each directory path should indicate that we are examining all files,
-             * Windows asks you to add an asterisk for this purpose.
+             * We want to skip one dot (for the current location) and
+             * two dots (for the parent directory).
              */
-            revisionSubpath = RevStringAppend(findFileData.cFileName, L"\\\\*");
-            if (revisionSubpath == NULL) {
-                RevLogError("Failed to normalize the revision subdirectory path (RevStringAppend failed).");
-                status = FALSE;
-                goto Exit;
-            }
+            continue;
+        }
+
+        if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            /*
+             * Found a subdirectory.
+             */
+
+            revisionSubpath = RevStringAppend(RootDirectoryPath,
+                                              findFileData.cFileName);
+            /*
+             * Recursively traverse all subdirectories.
+             */
             RevpEnumerateRecursively(revisionSubpath);
+
+            free(revisionSubpath);
         }
         else {
             /*
-             * Found a file, read it.
+             * Found a file.
              */
+
             printf(" ");
             wprintf(findFileData.cFileName);
             printf("\n");
@@ -225,6 +257,5 @@ BOOL RevpEnumerateRecursively(
     FindClose(findFile);
 
 Exit:
-    free(revisionSubpath);
     return status;
 }

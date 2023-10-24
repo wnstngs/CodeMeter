@@ -40,27 +40,41 @@ Author:
  * provided by the user at launch.
  */
 typedef struct REVISION_INIT_PARAMS {
-    PWCHAR RootDirectory;               // Path to the revision root directory.
+    _Field_z_ PWCHAR RootDirectory;         // Path to the revision root directory.
 } REVISION_INIT_PARAMS, *PREVISION_INIT_PARAMS;
 
 /**
  * @brief This structure stores statistics for some specific file extension.
  */
 typedef struct REVISION_RECORD {
-    PWCHAR Extension;                   // Extension of the revision record file.
-    PWCHAR RecognizedLanguage;          // Recognized programming language/file type based on extension.
-    ULONG CountOfLines;                 // Number of lines in the revision record.
+    _Field_z_ PWCHAR Extension;             // Extension of the revision record file.
+    _Field_z_ PWCHAR RecognizedLanguage;    // Recognized programming language/file type based on extension.
+    ULONG CountOfLines;                     // Number of lines in the revision record.
 } REVISION_RECORD, *PREVISION_RECORD;
 
 /**
  * @brief This structure stores the statistics of the entire revision.
  */
 typedef struct REVISION {
-    REVISION_INIT_PARAMS InitParams;    // Revision initialization parameters provided by the user.
-    ULONG TotalCountOfLines;            // Number of lines in the whole project.
-    PREVISION_RECORD HeadEntry;         // Head of the list of revision records for each extension.
-    PREVISION_RECORD LastEntry;         // Tail of the list of revision records for each extension.
+    REVISION_INIT_PARAMS InitParams;        // Revision initialization parameters provided by the user.
+    ULONG TotalCountOfLines;                // Number of lines in the whole project.
+    PREVISION_RECORD HeadEntry;             // Head of the list of revision records for each extension.
+    PREVISION_RECORD LastEntry;             // Tail of the list of revision records for each extension.
 } REVISION, *PREVISION;
+
+//
+// Constants.
+//
+
+/**
+ * @brief The string to be prepended to a path to avoid the MAX_PATH limitation.
+ */
+#define MAX_PATH_FIX    L"\\\\?\\"
+
+/**
+ * @brief The string to be appended to a path to indicate all of its contents.
+ */
+#define ASTERISK        L"\\*"
 
 //
 // Functions.
@@ -74,10 +88,12 @@ typedef struct REVISION {
  *         NULL if the function failed.
  *         N.B. The caller is responsible for freeing the memory.
  */
+_Ret_maybenull_
+_Must_inspect_result_
 PWCHAR
 RevStringAppend(
-    _In_ PWCHAR String1,
-    _In_ PWCHAR String2
+    _In_z_ PWCHAR String1,
+    _In_z_ PWCHAR String2
     );
 
 /**
@@ -88,10 +104,12 @@ RevStringAppend(
  *         NULL if the function failed.
  *         N.B. The caller is responsible for freeing the memory.
  */
+_Ret_maybenull_
+_Must_inspect_result_
 PWCHAR
 RevStringPrepend(
-    _In_ PWCHAR String1,
-    _In_ PWCHAR String2
+    _In_z_ PWCHAR String1,
+    _In_z_ PWCHAR String2
     );
 
 /**
@@ -120,15 +138,16 @@ RevStart(
 
 /**
  * @brief
- * @param Path
+ * @param RootDirectoryPath
  * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
 BOOL
 RevpEnumerateRecursively(
-    _In_ PWCHAR Path
+    _In_z_ PWCHAR RootDirectoryPath
     );
 
+_Must_inspect_result_
 BOOL
 RevisionReadFile();
 
