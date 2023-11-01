@@ -183,6 +183,9 @@ RevpEnumerateRecursively(
     PWCHAR revisionSubpath = NULL;
     PWCHAR searchPath = NULL;
 
+    /*
+     * Check validity of passed arguments.
+     */
     if (RootDirectoryPath == NULL) {
         RevLogError("Invalid parameters.");
         status = FALSE;
@@ -191,8 +194,9 @@ RevpEnumerateRecursively(
 
     /*
      * Create the search pattern:
-     *  Each directory path should indicate that we are examining all files,
-     *  Windows asks you to add an asterisk for this purpose.
+     *   Each directory path should indicate that we are examining all files,
+     *   Append a wildcard character (an asterisk) to the root path for this purpose.
+     * TODO: Check if the passed RootDirectoryPath already includes the wildcard.
      */
     searchPath = RevStringAppend(RootDirectoryPath,
                                  ASTERISK);
@@ -203,11 +207,11 @@ RevpEnumerateRecursively(
         goto Exit;
     }
 
+    /*
+     * Try to find a file or subdirectory with a name that matches the pattern.
+     */
     findFile = FindFirstFileW(searchPath,
                               &findFileData);
-
-    free(searchPath);
-
     if (findFile == INVALID_HANDLE_VALUE) {
         lastKnownWin32Error = GetLastError();
         RevLogError("Failed to find a file named \"%ls\" to start the enumeration. "
@@ -218,8 +222,10 @@ RevpEnumerateRecursively(
         goto Exit;
     }
 
+    free(searchPath);
+
     do {
-        if (wcscmp(findFileData.cFileName, L".") == 0 &&
+        if (wcscmp(findFileData.cFileName, L".") == 0 ||
             wcscmp(findFileData.cFileName, L"..") == 0) {
 
             /*
@@ -229,11 +235,10 @@ RevpEnumerateRecursively(
             continue;
         }
 
+        /*
+         * Check if found a subdirectory.
+         */
         if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            /*
-             * Found a subdirectory.
-             */
-
             revisionSubpath = RevStringAppend(RootDirectoryPath,
                                               findFileData.cFileName);
             /*
@@ -242,8 +247,8 @@ RevpEnumerateRecursively(
             RevpEnumerateRecursively(revisionSubpath);
 
             free(revisionSubpath);
-        }
-        else {
+        } else {
+
             /*
              * Found a file.
              */

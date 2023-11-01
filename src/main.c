@@ -66,16 +66,6 @@ int wmain(int argc, PWCHAR *argv)
         }
 
         /*
-         * Then append L"\\*" to enumerate the entire directory.
-         */
-        revisionPath = RevStringAppend(revisionPath, ASTERISK);
-        if (revisionPath == NULL) {
-            RevLogError("Failed to normalize the revision path (RevStringAppend failed).");
-            status = -1;
-            goto Exit;
-        }
-
-        /*
          * Now we are ready to set the root path of the revision directory.
          */
         revisionInitParams.RootDirectory = revisionPath;
