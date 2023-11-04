@@ -239,8 +239,30 @@ RevpEnumerateRecursively(
          * Check if found a subdirectory.
          */
         if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            /*
+             * If the item is a directory then append the "\" to the RootDirectoryPath.
+             */
             revisionSubpath = RevStringAppend(RootDirectoryPath,
+                                              L"\\");
+            if (revisionSubpath == NULL) {
+                RevLogError("Failed to normalize the revision subdirectory path "
+                            "(RevStringAppend failed).");
+                status = FALSE;
+                goto Exit;
+            }
+
+            /*
+             * Then append the subdirectory name that need to be traversed next.
+             */
+            revisionSubpath = RevStringAppend(revisionSubpath,
                                               findFileData.cFileName);
+            if (revisionSubpath == NULL) {
+                RevLogError("Failed to normalize the revision subdirectory path "
+                            "(RevStringAppend failed).");
+                status = FALSE;
+                goto Exit;
+            }
+
             /*
              * Recursively traverse all subdirectories.
              */
