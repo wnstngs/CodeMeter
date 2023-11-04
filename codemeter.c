@@ -24,6 +24,10 @@ Author:
 
 --*/
 
+//
+// ------------------------------------------------------------------- Includes
+//
+
 #include <stdio.h>
 #include <malloc.h>
 
@@ -36,7 +40,7 @@ Author:
 #include <Windows.h>
 
 //
-// Internal data structures.
+// ------------------------------------------------------ Data Type Definitions
 //
 
 /**
@@ -67,7 +71,7 @@ typedef struct REVISION {
 } REVISION, *PREVISION;
 
 //
-// Constants.
+// ------------------------------------------------------ Constants and Globals
 //
 
 /**
@@ -91,8 +95,13 @@ const WCHAR UsageString[] =
     "The path should be passed as the first argument of the command line:\n\n\t"
     "CodeMeter.exe \"C:\\\\MyProject\\\"\033[0m\n\n";
 
+/*
+ * The global revision state used throughout the entire program run-time.
+ */
+PREVISION Revision = NULL;
+
 //
-// Functions.
+// -------------------------------------------------------- Function Prototypes
 //
 
 /**
@@ -136,9 +145,8 @@ RevStringPrepend(
 _Must_inspect_result_
 BOOL
 RevInitialize(
-    _In_ PREVISION_INIT_PARAMS InitParams,
-    _Out_ PREVISION Revision
-);
+    _In_ PREVISION_INIT_PARAMS InitParams
+    );
 
 /**
  * @brief
@@ -148,8 +156,8 @@ RevInitialize(
 _Must_inspect_result_
 BOOL
 RevStart(
-    _In_ PREVISION Revision
-);
+    VOID
+    );
 
 /**
  * @brief
@@ -160,14 +168,13 @@ _Must_inspect_result_
 BOOL
 RevEnumerateRecursively(
     _In_z_ PWCHAR RootDirectoryPath
-);
+    );
 
 _Must_inspect_result_
 BOOL
 RevReviseFile(
-    _In_ PREVISION Revision,
     _In_z_ PWCHAR FilePath
-);
+    );
 
 /**
  * @brief This function outputs a red text error message to the standard error stream.
@@ -183,6 +190,9 @@ RevReviseFile(
         printf("\033[0m\n");                                        \
     } while (0)
 
+//
+// ------------------------------------------------------------------ Functions
+//
 
 _Ret_maybenull_
 PWCHAR
@@ -288,20 +298,32 @@ Exit:
 
 BOOL
 RevInitialize(
-    _In_ PREVISION_INIT_PARAMS InitParams,
-    _Out_ PREVISION Revision
+    _In_ PREVISION_INIT_PARAMS InitParams
     )
 {
     BOOL status = TRUE;
 
+    if (Revision != NULL) {
+        RevLogError("The revision is already initialized.");
+        status = FALSE;
+        goto Exit;
+    }
+
     if (InitParams == NULL ||
-        Revision == NULL ||
         InitParams->RootDirectory == NULL) {
 
         RevLogError("Invalid parameters.");
         status = FALSE;
         goto Exit;
     }
+
+    /*
+     * Initialize the revision structure.
+     */
+
+    Revision = (PREVISION) malloc(sizeof(REVISION));
+
+    RtlZeroMemory(Revision, sizeof(REVISION));
 
     Revision->InitParams = *InitParams;
     Revision->HeadEntry = NULL;
@@ -314,13 +336,13 @@ Exit:
 
 BOOL
 RevStart(
-    _In_ PREVISION Revision
+    VOID
     )
 {
     BOOL status = TRUE;
 
     if (Revision == NULL || Revision->InitParams.RootDirectory == NULL) {
-        RevLogError("Invalid parameters.");
+        RevLogError("The revision is not initialized/initialized correctly.");
         status = FALSE;
         goto Exit;
     }
@@ -437,12 +459,23 @@ RevEnumerateRecursively(
              * Found a file.
              */
 
-            RevReviseFile();
+            RevReviseFile(findFileData.cFileName);
         }
     } while (FindNextFileW(findFile, &findFileData) != 0);
 
     FindClose(findFile);
 
+Exit:
+    return status;
+}
+
+BOOL
+RevReviseFile(
+    PWCHAR FilePath
+    )
+{
+    BOOL status = TRUE;
+    wprintf(FilePath);
 Exit:
     return status;
 }
@@ -509,13 +542,13 @@ int wmain(int argc, PWCHAR *argv)
     /*
      * Initialize the directory revision process.
      */
-    if (!RevInitialize(&revisionInitParams, &revision)) {
+    if (!RevInitialize(&revisionInitParams)) {
         RevLogError("RevInitialize failed.");
         status = -1;
         goto Exit;
     }
 
-    if (!RevStart(&revision)) {
+    if (!RevStart()) {
         RevLogError("RevStart failed.");
         status = -1;
         goto Exit;
