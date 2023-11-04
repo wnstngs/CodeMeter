@@ -4,12 +4,14 @@ Copyright (c) 2023  Glebs. All rights reserved.
 
 Module Name:
 
-    revision.c
+    codemeter.c
     
 Abstract:
 
-    This module contains the revision code. Revision means the whole process:
-    from scanning files and counting them to counting lines of code.
+    This module implements CodeMeter, a program for counting lines of code.
+
+    Further, the term "revision" is mentioned repeatedly. It is understood to mean
+    the whole process: from scanning files and counting them to counting lines of code.
                           ┌─────────────────┐
                 e.g. path │                 │ returns
     Init params ─────────►│    Revision     ├─────────► Statistics
@@ -457,6 +459,7 @@ int wmain(int argc, PWCHAR *argv)
 
     /*
      * Process the command line arguments if any.
+     * TODO: "<= 1" instead of "<= -1" in Release. "-1" is used only for debugging.
      */
     if (argc <= -1) {
         /*
@@ -471,6 +474,7 @@ int wmain(int argc, PWCHAR *argv)
 
         /*
          * Prepend L"\\?\" to the `argv[1]` to avoid the obsolete MAX_PATH limitation.
+         * TODO: Use argv[1] instead of testPath. testPath is used only for debugging.
          */
         PWCHAR testPath = L"C:\\Users\\Glebs\\Downloads";
         revisionPath = RevStringPrepend(testPath/*argv[1]*/, MAX_PATH_FIX);
