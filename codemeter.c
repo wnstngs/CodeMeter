@@ -65,7 +65,7 @@ typedef struct REVISION_RECORD {
  */
 typedef struct REVISION {
     REVISION_INIT_PARAMS InitParams;        // Revision initialization parameters provided by the user.
-    ULONG TotalCountOfLines;                // Number of lines in the whole project.
+    ULONGLONG TotalCountOfLines;            // Number of lines in the whole project.
     PREVISION_RECORD HeadEntry;             // Head of the list of revision records for each extension.
     PREVISION_RECORD LastEntry;             // Tail of the list of revision records for each extension.
 } REVISION, *PREVISION;
@@ -105,6 +105,17 @@ PREVISION Revision = NULL;
 //
 
 /**
+ * @brief This function retrieves the calling thread's last-error code value
+ * and translates it into its corresponding error message.
+ * @return A pointer to the error message string on success, or NULL on failure.
+ */
+_Ret_maybenull_
+PWCHAR
+RevGetLastKnownWin32Error(
+    VOID
+    );
+
+/**
  * @brief This function appends one unicode string to another and returns the result.
  * @param String1 The first string (to which String2 will be appended).
  * @param String2 The second string (to be appended to String1).
@@ -118,7 +129,7 @@ PWCHAR
 RevStringAppend(
     _In_z_ PWCHAR String1,
     _In_z_ PWCHAR String2
-);
+    );
 
 /**
  * @brief This function prepends one unicode string to another and returns the result.
@@ -134,12 +145,12 @@ PWCHAR
 RevStringPrepend(
     _In_z_ PWCHAR String1,
     _In_z_ PWCHAR String2
-);
+    );
 
 /**
  * @brief This function is responsible for initializing the revision system.
  * @param InitParams Supplies the revision initialization parameters.
-= * @return TRUE if succeeded, FALSE if failed.
+ * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
 BOOL
@@ -200,6 +211,49 @@ RevReviseFile(
 //
 // ------------------------------------------------------------------ Functions
 //
+
+_Ret_maybenull_
+PWCHAR
+RevGetLastKnownWin32Error(
+    VOID
+    )
+{
+    PWCHAR messageBuffer;
+    DWORD lastKnownError = GetLastError(), formatResult;
+
+    /*
+     * Attempt to format the error code into a human-readable string.
+     */
+    formatResult = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+                                  NULL,
+                                  lastKnownError,
+                                  0,
+                                  (LPWSTR) &messageBuffer,
+                                  0,
+                                  NULL);
+
+    if (formatResult == 0) {
+        /*
+         * If FormatMessageW failed, convert the error code to a string
+         * and return that.
+         */
+
+        /* N.B. The maximum error code value is a 5-digit number (15999). */
+        messageBuffer = (PWCHAR) malloc((5 + 1) * sizeof(WCHAR));
+        if (messageBuffer == NULL) {
+            RevLogError("Failed to allocate a message buffer.");
+            goto Exit;
+        }
+
+        swprintf_s(messageBuffer,
+                   (5 + 1),
+                   L"%d",
+                   lastKnownError);
+    }
+
+Exit:
+    return messageBuffer;
+}
 
 _Ret_maybenull_
 PWCHAR
@@ -366,10 +420,9 @@ RevEnumerateRecursively(
     )
 {
     BOOL status = TRUE;
-    DWORD lastKnownWin32Error;
     HANDLE findFile = INVALID_HANDLE_VALUE;
     WIN32_FIND_DATAW findFileData;
-    PWCHAR revisionSubpath = NULL;
+    PWCHAR subdirectoryPath = NULL;
     PWCHAR searchPath = NULL;
 
     /*
@@ -401,17 +454,23 @@ RevEnumerateRecursively(
      */
     findFile = FindFirstFileW(searchPath,
                               &findFileData);
+
+    /*
+     * Free after RevStringAppend.
+     */
+    free(searchPath);
+
+    /*
+     * Check if FindFirstFileW failed.
+     */
     if (findFile == INVALID_HANDLE_VALUE) {
-        lastKnownWin32Error = GetLastError();
         RevLogError("Failed to find a file named \"%ls\" to start the enumeration. "
-                    "The last known error: %lu",
+                    "The last known error: %ls",
                     RootDirectoryPath,
-                    lastKnownWin32Error);
+                    RevGetLastKnownWin32Error());
         status = FALSE;
         goto Exit;
     }
-
-    free(searchPath);
 
     do {
         if (wcscmp(findFileData.cFileName, L".") == 0 ||
@@ -425,49 +484,52 @@ RevEnumerateRecursively(
         }
 
         /*
+         * To construct a subpath, append the "\" to the RootDirectoryPath.
+         */
+        subdirectoryPath = RevStringAppend(RootDirectoryPath,
+                                           L"\\");
+        if (subdirectoryPath == NULL) {
+            RevLogError("Failed to normalize the revision subdirectory path "
+                        "(RevStringAppend failed).");
+            status = FALSE;
+            goto Exit;
+        }
+
+        /*
+         * Then append the subdirectory name that need to be traversed next.
+         * N.B. The wildcard character (an asterisk) is not needed to be added as
+         * it is done before calling FindFirstFileW.
+         */
+        subdirectoryPath = RevStringAppend(subdirectoryPath,
+                                           findFileData.cFileName);
+        if (subdirectoryPath == NULL) {
+            RevLogError("Failed to normalize the revision subdirectory path "
+                        "(RevStringAppend failed).");
+            status = FALSE;
+            goto Exit;
+        }
+
+        /*
          * Check if found a subdirectory.
          */
         if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            /*
-             * If the item is a directory then append the "\" to the RootDirectoryPath.
-             */
-            revisionSubpath = RevStringAppend(RootDirectoryPath,
-                                              L"\\");
-            if (revisionSubpath == NULL) {
-                RevLogError("Failed to normalize the revision subdirectory path "
-                            "(RevStringAppend failed).");
-                status = FALSE;
-                goto Exit;
-            }
 
             /*
-             * Then append the subdirectory name that need to be traversed next.
-             * N.B. The wildcard character (an asterisk) is not needed to be added as
-             * it is done before calling FindFirstFileW.
+             * Recursively traverse a subdirectory.
              */
-            revisionSubpath = RevStringAppend(revisionSubpath,
-                                              findFileData.cFileName);
-            if (revisionSubpath == NULL) {
-                RevLogError("Failed to normalize the revision subdirectory path "
-                            "(RevStringAppend failed).");
-                status = FALSE;
-                goto Exit;
-            }
-
-            /*
-             * Recursively traverse all subdirectories.
-             */
-            RevEnumerateRecursively(revisionSubpath);
-
-            free(revisionSubpath);
+            RevEnumerateRecursively(subdirectoryPath);
         } else {
 
             /*
-             * Found a file.
+             * If found a file, revise it.
              */
-
-            RevReviseFile(findFileData.cFileName);
+            RevReviseFile(subdirectoryPath);
         }
+
+        /*
+         * Free after RevStringAppend.
+         */
+        free(subdirectoryPath);
     } while (FindNextFileW(findFile, &findFileData) != 0);
 
     FindClose(findFile);
@@ -481,9 +543,78 @@ RevReviseFile(
     PWCHAR FilePath
     )
 {
-    BOOL status = TRUE;
-    wprintf(FilePath);
+    BOOL status = TRUE, eof = FALSE;
+    HANDLE file;
+    ULONGLONG lineCount = 0;
+    PWCHAR readBuffer = NULL;
+    DWORD bytesRead, i;
+
+    if (FilePath == NULL) {
+        RevLogError("Invalid parameter/-s.");
+        status = FALSE;
+        goto Exit;
+    }
+
+    /*
+     * Attempt to open the file for reading.
+     */
+    file = CreateFileW(FilePath,
+                       GENERIC_READ,
+                       FILE_SHARE_DELETE | FILE_SHARE_READ,
+                       NULL,
+                       OPEN_EXISTING,
+                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+                       NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        RevLogError("Failed to read the file \"%ls\". The last known error: %ls",
+                    FilePath,
+                    RevGetLastKnownWin32Error());
+        status = FALSE;
+        goto Exit;
+    }
+
+    /*
+     * Allocate the buffer for reading.
+     */
+    readBuffer = (PWCHAR) malloc(524288);
+    if (readBuffer == NULL) {
+        RevLogError("Failed to allocate a buffer.");
+        status = FALSE;
+        goto Exit;
+    }
+
+    /*
+     * Read the file content and count lines.
+     */
+    while (!eof) {
+        ReadFile(file,
+                 readBuffer,
+                 sizeof(readBuffer),
+                 &bytesRead,
+                 NULL);
+
+        for (i = 0; i < bytesRead; ++i) {
+            if (readBuffer[i] == '\n') {
+                ++lineCount;
+            }
+        }
+
+        /*
+         * Check if we've reached the end of the file.
+         */
+        eof = bytesRead < sizeof(readBuffer);
+    }
+
+    /*
+     * Update the total line count.
+     */
+    Revision->TotalCountOfLines += lineCount;
+
+    CloseHandle(file);
+
 Exit:
+    free(readBuffer);
+
     return status;
 }
 
@@ -494,6 +625,7 @@ wmain(
     )
 {
     int status = 0;
+    ULONGLONG start, end;
     PWCHAR revisionPath = NULL;
     REVISION_INIT_PARAMS revisionInitParams;
 
@@ -518,7 +650,7 @@ wmain(
          * Prepend L"\\?\" to the `argv[1]` to avoid the obsolete MAX_PATH limitation.
          * TODO: Use argv[1] instead of testPath. testPath is used only for debugging.
          */
-        PWCHAR testPath = L"C:\\Users\\Glebs\\Downloads";
+        PWCHAR testPath = L"C:\\Dev\\CodeMeter";
         revisionPath = RevStringPrepend(testPath/*argv[1]*/, MAX_PATH_FIX);
         if (revisionPath == NULL) {
             RevLogError("Failed to normalize the revision path (RevStringPrepend failed).");
@@ -557,13 +689,21 @@ wmain(
         goto Exit;
     }
 
+    start = __rdtsc();
+
     if (!RevStart()) {
         RevLogError("RevStart failed.");
         status = -1;
         goto Exit;
     }
 
+    end = __rdtsc();
+
+    printf("TotalCountOfLines: %llu", Revision->TotalCountOfLines);
+    printf(" (in %lld ticks)\n", end - start);
+
 Exit:
     free(revisionPath);
+
     return status;
 }
