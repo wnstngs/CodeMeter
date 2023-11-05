@@ -137,10 +137,9 @@ RevStringPrepend(
 );
 
 /**
- * @brief
+ * @brief This function is responsible for initializing the revision system.
  * @param InitParams Supplies the revision initialization parameters.
- * @param Revision
- * @return TRUE if succeeded, FALSE if failed.
+= * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
 BOOL
@@ -149,9 +148,10 @@ RevInitialize(
     );
 
 /**
- * @brief
- * @param Revision
- * @return TRUE if succeeded, FALSE if failed.
+ * @brief This function is responsible for starting the revision system. It
+ * ensures that the system has been initialized correctly before proceeding
+ * with its operations.
+= * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
 BOOL
@@ -160,8 +160,10 @@ RevStart(
     );
 
 /**
- * @brief
- * @param RootDirectoryPath
+ * @brief This function is designed to recursively traverse and enumerate files
+ * and subdirectories within a given root directory path.
+ * @param RootDirectoryPath Supplies the root directory path from which enumeration
+ * should begin.
  * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
@@ -170,6 +172,11 @@ RevEnumerateRecursively(
     _In_z_ PWCHAR RootDirectoryPath
     );
 
+/**
+ * @brief This function reads and revises the specified file.
+ * @param FilePath Supplies the path to the file to be revised..
+ * @return TRUE if succeeded, FALSE if failed.
+ */
 _Must_inspect_result_
 BOOL
 RevReviseFile(
@@ -253,7 +260,7 @@ RevStringPrepend(
     PWCHAR result;
 
     if (String1 == NULL || String2 == NULL) {
-        RevLogError("Invalid parameters.");
+        RevLogError("Invalid parameter/-s.");
         result = NULL;
         goto Exit;
     }
@@ -312,7 +319,7 @@ RevInitialize(
     if (InitParams == NULL ||
         InitParams->RootDirectory == NULL) {
 
-        RevLogError("Invalid parameters.");
+        RevLogError("Invalid parameter/-s.");
         status = FALSE;
         goto Exit;
     }
@@ -369,7 +376,7 @@ RevEnumerateRecursively(
      * Check validity of passed arguments.
      */
     if (RootDirectoryPath == NULL) {
-        RevLogError("Invalid parameters.");
+        RevLogError("Invalid parameter/-s.");
         status = FALSE;
         goto Exit;
     }
@@ -480,13 +487,15 @@ Exit:
     return status;
 }
 
-int wmain(int argc, PWCHAR *argv)
+int
+wmain(
+    int argc,
+    wchar_t *argv[]
+    )
 {
     int status = 0;
-    HANDLE stdOut;
     PWCHAR revisionPath = NULL;
     REVISION_INIT_PARAMS revisionInitParams;
-    REVISION revision;
 
     wprintf(WelcomeString);
 
