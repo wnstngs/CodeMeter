@@ -52,11 +52,22 @@ typedef struct REVISION_INIT_PARAMS {
 } REVISION_INIT_PARAMS, *PREVISION_INIT_PARAMS;
 
 /**
+ * @brief This structure stores the mapping of file extensions to programming languages.
+ */
+typedef struct REVISION_RECORD_EXTENSION_MAPPING {
+    _Field_z_ PWCHAR Extension;             // File extension.
+    _Field_z_ PWCHAR LanguageOrType;        // Programming language or file type.
+} REVISION_RECORD_EXTENSION_MAPPING, *PREVISION_RECORD_EXTENSION_MAPPING;
+
+/**
  * @brief This structure stores statistics for some specific file extension.
  */
 typedef struct REVISION_RECORD {
-    _Field_z_ PWCHAR Extension;             // Extension of the revision record file.
-    _Field_z_ PWCHAR RecognizedLanguage;    // Recognized programming language/file type based on extension.
+    /*
+     * Extension of the revision record file and recognized programming language/file
+     * type based on extension.
+     */
+    REVISION_RECORD_EXTENSION_MAPPING ExtensionMapping;
     ULONG CountOfLines;                     // Number of lines in the revision record.
 } REVISION_RECORD, *PREVISION_RECORD;
 
@@ -95,6 +106,14 @@ const WCHAR UsageString[] =
     "The path should be passed as the first argument of the command line:\n\n\t"
     "CodeMeter.exe \"C:\\\\MyProject\\\"\033[0m\n\n";
 
+/**
+ * @brief Mapping of file extensions that can be recognized to human-readable descriptions of file types.
+ */
+REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
+    {L".c", L"C"},
+    {L".h", L"C/C++ Header"}
+};
+
 /*
  * The global revision state used throughout the entire program run-time.
  */
@@ -113,6 +132,17 @@ _Ret_maybenull_
 PWCHAR
 RevGetLastKnownWin32Error(
     VOID
+    );
+
+/**
+ * @brief This function checks if a file extension is in the extension table. File should be revised
+ * only if it has valid (is in the table) extension.
+ * @param FilePath Supplies the path to the file to be checked.
+ * @return TRUE if succeeded, FALSE if failed.
+ */
+BOOL
+RevShouldReviseFile(
+    _In_ PWCHAR FilePath
     );
 
 /**
@@ -185,7 +215,7 @@ RevEnumerateRecursively(
 
 /**
  * @brief This function reads and revises the specified file.
- * @param FilePath Supplies the path to the file to be revised..
+ * @param FilePath Supplies the path to the file to be revised.
  * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
@@ -253,6 +283,43 @@ RevGetLastKnownWin32Error(
 
 Exit:
     return messageBuffer;
+}
+
+BOOL
+RevShouldReviseFile(
+    _In_ PWCHAR FilePath
+    )
+{
+    LONG i, tableSize;
+    PWCHAR fileExtension;
+
+    if (FilePath == NULL) {
+        RevLogError("FilePath is NULL.");
+        return FALSE;
+    }
+
+    /*
+     * Find the file extension.
+     */
+    fileExtension = wcsrchr(FilePath, L'.');
+
+    if (fileExtension == NULL) {
+        RevLogError("Failed to determine the extension for the file \"%ls\".", FilePath);
+        return FALSE;
+    }
+
+    /*
+     * Define the size of the extension mapping table.
+     */
+    tableSize = sizeof(ExtensionMappingTable) / sizeof(ExtensionMappingTable[0]);
+
+    for (i = 0; i < tableSize; ++i) {
+        if (wcscmp(ExtensionMappingTable[i].Extension, fileExtension) == 0) {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
 }
 
 _Ret_maybenull_
@@ -436,8 +503,10 @@ RevEnumerateRecursively(
 
     /*
      * Create the search pattern:
-     *   Each directory path should indicate that we are examining all files,
-     *   Append a wildcard character (an asterisk) to the root path for this purpose.
+     *
+     * Each directory path should indicate that we are examining all files,
+     * Append a wildcard character (an asterisk) to the root path for this purpose.
+     *
      * TODO: Check if the passed RootDirectoryPath already includes the wildcard.
      */
     searchPath = RevStringAppend(RootDirectoryPath,
@@ -521,9 +590,15 @@ RevEnumerateRecursively(
         } else {
 
             /*
-             * If found a file, revise it.
+             * If found a file, check if the file should be revised, and if so, revise it.
+             *
+             * The revision should be performed only if the file extension has been recognized.
+             * For this purpose it is enough to pass only the file name (findFileData.cFileName),
+             * for file revision the full path (subdirectoryPath) is required.
              */
-            RevReviseFile(subdirectoryPath);
+            if (RevShouldReviseFile(findFileData.cFileName)) {
+                RevReviseFile(subdirectoryPath);
+            }
         }
 
         /*
@@ -589,7 +664,7 @@ RevReviseFile(
     while (!eof) {
         ReadFile(file,
                  readBuffer,
-                 sizeof(readBuffer),
+                 524288,
                  &bytesRead,
                  NULL);
 
@@ -650,7 +725,7 @@ wmain(
          * Prepend L"\\?\" to the `argv[1]` to avoid the obsolete MAX_PATH limitation.
          * TODO: Use argv[1] instead of testPath. testPath is used only for debugging.
          */
-        PWCHAR testPath = L"C:\\Dev\\CodeMeter";
+        PWCHAR testPath = L"C:\\Dev\\CodeMeter\\tests";
         revisionPath = RevStringPrepend(testPath/*argv[1]*/, MAX_PATH_FIX);
         if (revisionPath == NULL) {
             RevLogError("Failed to normalize the revision path (RevStringPrepend failed).");
