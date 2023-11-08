@@ -137,6 +137,9 @@ const WCHAR UsageString[] =
 
 /**
  * @brief Mapping of file extensions that can be recognized to human-readable descriptions of file types.
+ *
+ * FIXME: Multi-dot extensions are commented out, we need to add support for them.
+ * The current algorithm counts everything after the last dot as an extension.
  */
 REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".abap",               L"ABAP"},
