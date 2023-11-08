@@ -1574,7 +1574,7 @@ RevFindRevisionRecordByExtension(
      */
     RevInsertTailList(&Revision->RevisionRecordListHead, &revisionRecord->ListEntry);
 
-    return NULL;
+    return revisionRecord;
 }
 
 BOOL
