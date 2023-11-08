@@ -73,6 +73,9 @@ typedef struct REVISION_RECORD_EXTENSION_MAPPING {
  * @brief This structure stores statistics for some specific file extension.
  */
 typedef struct REVISION_RECORD {
+    /*
+     * Linked list entry.
+     */
     LIST_ENTRY ListEntry;
 
     /*
@@ -1213,6 +1216,22 @@ RevReviseFile(
     _In_z_ PWCHAR FilePath
     );
 
+VOID
+RevDumpRevisionRecordList()
+{
+    PLIST_ENTRY entry;
+    for (entry = Revision->RevisionRecordListHead.Flink;
+         entry != &Revision->RevisionRecordListHead;
+         entry = entry->Flink) {
+        PREVISION_RECORD revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
+        if (revisionRecord) {
+            printf("Extension: %ls, Lines of Code: %lu\n",
+                   revisionRecord->ExtensionMapping.Extension,
+                   revisionRecord->CountOfLines);
+        }
+    }
+}
+
 /**
  * @brief This function initializes a LIST_ENTRY structure that represents
  * the head of a doubly linked list.
@@ -1522,7 +1541,7 @@ RevFindRevisionRecordByExtension(
 
     entry = Revision->RevisionRecordListHead.Flink;
 
-    do {
+    while (entry != &Revision->RevisionRecordListHead) {
         revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
 
         /*
@@ -1533,8 +1552,7 @@ RevFindRevisionRecordByExtension(
         }
 
         entry = entry->Flink;
-
-    } while (entry != &Revision->RevisionRecordListHead);
+    }
 
     /*
      * If no matching extension was found, create a new revision record.
@@ -1737,7 +1755,9 @@ RevReviseFile(
     BOOL status = TRUE;
     ULONGLONG lineCount = 0;
     WCHAR lineBuffer[4096];
+    PWCHAR fileExtension;
     FILE *file;
+    PREVISION_RECORD revisionRecord;
 
     if (_wfopen_s(&file, FilePath, L"r") != 0 || file == NULL) {
         RevLogError("Failed to open the file \"%ls\".", FilePath);
@@ -1749,6 +1769,32 @@ RevReviseFile(
         ++lineCount;
     }
 
+    /*
+     * Find the file extension.
+     */
+    fileExtension = wcsrchr(FilePath, L'.');
+    if (fileExtension == NULL) {
+        RevLogError("Failed to determine the extension for the file \"%ls\".", FilePath);
+        status = FALSE;
+        goto Exit;
+    }
+
+    revisionRecord = RevFindRevisionRecordByExtension(fileExtension);
+    if (revisionRecord == NULL) {
+        RevLogError("Failed to get/initialize the revision record for the file extension \"%ls\".",
+                    fileExtension);
+        status = FALSE;
+        goto Exit;
+    }
+
+    /*
+     * Update the count of lines for the extension.
+     */
+    revisionRecord->CountOfLines += lineCount;
+
+    /*
+     * Update the total count of lines.
+     */
     Revision->TotalCountOfLines += lineCount;
 
     fclose(file);
@@ -1839,6 +1885,7 @@ wmain(
     end = __rdtsc();
 
     printf("TotalCountOfLines: %llu", Revision->TotalCountOfLines);
+    RevDumpRevisionRecordList();
     printf(" (in %lld ticks)\n", end - start);
 
 Exit:
