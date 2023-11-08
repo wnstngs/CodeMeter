@@ -48,15 +48,25 @@ Author:
  * provided by the user at launch.
  */
 typedef struct REVISION_INIT_PARAMS {
-    _Field_z_ PWCHAR RootDirectory;         // Path to the revision root directory.
+    /*
+     * Path to the revision root directory.
+     */
+    _Field_z_ PWCHAR RootDirectory;
 } REVISION_INIT_PARAMS, *PREVISION_INIT_PARAMS;
 
 /**
  * @brief This structure stores the mapping of file extensions to programming languages.
  */
 typedef struct REVISION_RECORD_EXTENSION_MAPPING {
-    _Field_z_ PWCHAR Extension;             // File extension.
-    _Field_z_ PWCHAR LanguageOrType;        // Programming language or file type.
+    /*
+     * File extension.
+     */
+    _Field_z_ PWCHAR Extension;
+
+    /*
+     * Programming language or file type.
+     */
+    _Field_z_ PWCHAR LanguageOrType;
 } REVISION_RECORD_EXTENSION_MAPPING, *PREVISION_RECORD_EXTENSION_MAPPING;
 
 /**
@@ -68,17 +78,36 @@ typedef struct REVISION_RECORD {
      * type based on extension.
      */
     REVISION_RECORD_EXTENSION_MAPPING ExtensionMapping;
-    ULONG CountOfLines;                     // Number of lines in the revision record.
+
+    /*
+     * Number of lines in the revision record.
+     */
+    ULONG CountOfLines;
 } REVISION_RECORD, *PREVISION_RECORD;
 
 /**
  * @brief This structure stores the statistics of the entire revision.
  */
 typedef struct REVISION {
-    REVISION_INIT_PARAMS InitParams;        // Revision initialization parameters provided by the user.
-    ULONGLONG TotalCountOfLines;            // Number of lines in the whole project.
-    PREVISION_RECORD HeadEntry;             // Head of the list of revision records for each extension.
-    PREVISION_RECORD LastEntry;             // Tail of the list of revision records for each extension.
+    /*
+     * Revision initialization parameters provided by the user.
+     */
+    REVISION_INIT_PARAMS InitParams;
+
+    /*
+     * Number of lines in the whole project.
+     */
+    ULONGLONG TotalCountOfLines;
+
+    /*
+     * Head of the list of revision records for each extension.
+     */
+    PREVISION_RECORD HeadEntry;
+
+    /*
+     * Tail of the list of revision records for each extension.
+     */
+    PREVISION_RECORD LastEntry;
 } REVISION, *PREVISION;
 
 //
@@ -132,17 +161,6 @@ _Ret_maybenull_
 PWCHAR
 RevGetLastKnownWin32Error(
     VOID
-    );
-
-/**
- * @brief This function checks if a file extension is in the extension table. File should be revised
- * only if it has valid (is in the table) extension.
- * @param FilePath Supplies the path to the file to be checked.
- * @return TRUE if succeeded, FALSE if failed.
- */
-BOOL
-RevShouldReviseFile(
-    _In_ PWCHAR FilePath
     );
 
 /**
@@ -211,6 +229,17 @@ _Must_inspect_result_
 BOOL
 RevEnumerateRecursively(
     _In_z_ PWCHAR RootDirectoryPath
+    );
+
+/**
+ * @brief This function checks if a file extension is in the extension table. File should be revised
+ * only if it has valid (is in the table) extension.
+ * @param FilePath Supplies the path to the file to be checked.
+ * @return TRUE if succeeded, FALSE if failed.
+ */
+BOOL
+RevShouldReviseFile(
+    _In_z_ PWCHAR FilePath
     );
 
 /**
@@ -283,43 +312,6 @@ RevGetLastKnownWin32Error(
 
 Exit:
     return messageBuffer;
-}
-
-BOOL
-RevShouldReviseFile(
-    _In_ PWCHAR FilePath
-    )
-{
-    LONG i, tableSize;
-    PWCHAR fileExtension;
-
-    if (FilePath == NULL) {
-        RevLogError("FilePath is NULL.");
-        return FALSE;
-    }
-
-    /*
-     * Find the file extension.
-     */
-    fileExtension = wcsrchr(FilePath, L'.');
-
-    if (fileExtension == NULL) {
-        RevLogError("Failed to determine the extension for the file \"%ls\".", FilePath);
-        return FALSE;
-    }
-
-    /*
-     * Define the size of the extension mapping table.
-     */
-    tableSize = sizeof(ExtensionMappingTable) / sizeof(ExtensionMappingTable[0]);
-
-    for (i = 0; i < tableSize; ++i) {
-        if (wcscmp(ExtensionMappingTable[i].Extension, fileExtension) == 0) {
-            return TRUE;
-        }
-    }
-
-    return FALSE;
 }
 
 _Ret_maybenull_
@@ -486,7 +478,7 @@ RevEnumerateRecursively(
     _In_z_ PWCHAR RootDirectoryPath
     )
 {
-    BOOL status = TRUE;
+    BOOL status = TRUE, fileRevisionResult;
     HANDLE findFile = INVALID_HANDLE_VALUE;
     WIN32_FIND_DATAW findFileData;
     PWCHAR subdirectoryPath = NULL;
@@ -594,10 +586,13 @@ RevEnumerateRecursively(
              *
              * The revision should be performed only if the file extension has been recognized.
              * For this purpose it is enough to pass only the file name (findFileData.cFileName),
-             * for file revision the full path (subdirectoryPath) is required.
+             * but for file revision the full path (subdirectoryPath) is required.
              */
             if (RevShouldReviseFile(findFileData.cFileName)) {
-                RevReviseFile(subdirectoryPath);
+                fileRevisionResult = RevReviseFile(subdirectoryPath);
+                if (!fileRevisionResult) {
+                    RevLogError("RevReviseFile failed to revise the file \"%ls\".", subdirectoryPath);
+                }
             }
         }
 
@@ -614,82 +609,66 @@ Exit:
 }
 
 BOOL
-RevReviseFile(
-    PWCHAR FilePath
+RevShouldReviseFile(
+    _In_z_ PWCHAR FilePath
     )
 {
-    BOOL status = TRUE, eof = FALSE;
-    HANDLE file;
-    ULONGLONG lineCount = 0;
-    PWCHAR readBuffer = NULL;
-    DWORD bytesRead, i;
+    LONG i, tableSize;
+    PWCHAR fileExtension;
 
     if (FilePath == NULL) {
-        RevLogError("Invalid parameter/-s.");
-        status = FALSE;
-        goto Exit;
+        RevLogError("FilePath is NULL.");
+        return FALSE;
     }
 
     /*
-     * Attempt to open the file for reading.
+     * Find the file extension.
      */
-    file = CreateFileW(FilePath,
-                       GENERIC_READ,
-                       FILE_SHARE_DELETE | FILE_SHARE_READ,
-                       NULL,
-                       OPEN_EXISTING,
-                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
-                       NULL);
-    if (file == INVALID_HANDLE_VALUE) {
-        RevLogError("Failed to read the file \"%ls\". The last known error: %ls",
-                    FilePath,
-                    RevGetLastKnownWin32Error());
-        status = FALSE;
-        goto Exit;
+    fileExtension = wcsrchr(FilePath, L'.');
+
+    if (fileExtension == NULL) {
+        RevLogError("Failed to determine the extension for the file \"%ls\".", FilePath);
+        return FALSE;
     }
 
-    /*
-     * Allocate the buffer for reading.
-     */
-    readBuffer = (PWCHAR) malloc(524288);
-    if (readBuffer == NULL) {
-        RevLogError("Failed to allocate a buffer.");
-        status = FALSE;
-        goto Exit;
-    }
-
-    /*
-     * Read the file content and count lines.
-     */
-    while (!eof) {
-        ReadFile(file,
-                 readBuffer,
-                 524288,
-                 &bytesRead,
-                 NULL);
-
-        for (i = 0; i < bytesRead; ++i) {
-            if (readBuffer[i] == '\n') {
-                ++lineCount;
-            }
+    for (i = 0; i < ARRAYSIZE(ExtensionMappingTable); ++i) {
+        if (wcscmp(ExtensionMappingTable[i].Extension, fileExtension) == 0) {
+            return TRUE;
         }
-
-        /*
-         * Check if we've reached the end of the file.
-         */
-        eof = bytesRead < sizeof(readBuffer);
     }
 
+    return FALSE;
+}
+
+BOOL
+RevReviseFile(
+    _In_z_ PWCHAR FilePath
+    )
+{
     /*
-     * Update the total line count.
+     * TODO: Use Win32.
+     * TODO: `WCHAR lineBuffer[4096];` - A string buffer with such a fixed size is not appropriate.
      */
+    BOOL status = TRUE;
+    ULONGLONG lineCount = 0;
+    WCHAR lineBuffer[4096];
+    FILE *file;
+
+    if (_wfopen_s(&file, FilePath, L"r") != 0 || file == NULL) {
+        RevLogError("Failed to open the file \"%ls\".", FilePath);
+        status = FALSE;
+        goto Exit;
+    }
+
+    while (fgetws(lineBuffer, ARRAYSIZE(lineBuffer), file) != NULL) {
+        ++lineCount;
+    }
+
     Revision->TotalCountOfLines += lineCount;
 
-    CloseHandle(file);
+    fclose(file);
 
 Exit:
-    free(readBuffer);
-
     return status;
 }
 
