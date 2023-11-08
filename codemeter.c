@@ -125,15 +125,15 @@ typedef struct REVISION {
 #define ASTERISK        L"\\*"
 
 const WCHAR WelcomeString[] =
-    L"\033[32mCodeMeter v0.0.1                 Copyright(c) 2023 Glebs\n"
-    "--------------------------------------------------------\033[0m\n\n";
+    L"CodeMeter v0.0.1                 Copyright(c) 2023 Glebs\n"
+    "--------------------------------------------------------\n\n";
 
 const WCHAR UsageString[] =
-    L"\033[33mInstructions on how to use CodeMeter tools:\n\n"
+    L"Instructions on how to use CodeMeter tools:\n\n"
     "In order to count the number of lines of CodeMeter code, you need "
     "the path to the root directory of the project you want to revise.\n"
     "The path should be passed as the first argument of the command line:\n\n\t"
-    "CodeMeter.exe \"C:\\\\MyProject\\\"\033[0m\n\n";
+    "CodeMeter.exe \"C:\\\\MyProject\\\"\n\n";
 
 /**
  * @brief Mapping of file extensions that can be recognized to human-readable descriptions of file types.
@@ -1217,20 +1217,9 @@ RevReviseFile(
     );
 
 VOID
-RevDumpRevisionRecordList()
-{
-    PLIST_ENTRY entry;
-    for (entry = Revision->RevisionRecordListHead.Flink;
-         entry != &Revision->RevisionRecordListHead;
-         entry = entry->Flink) {
-        PREVISION_RECORD revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
-        if (revisionRecord) {
-            printf("Extension: %ls, Lines of Code: %lu\n",
-                   revisionRecord->ExtensionMapping.Extension,
-                   revisionRecord->CountOfLines);
-        }
-    }
-}
+RevDumpRevisionRecordList(
+    VOID
+    );
 
 /**
  * @brief This function initializes a LIST_ENTRY structure that represents
@@ -1279,6 +1268,28 @@ RevInsertTailList(
     Entry->Blink = Blink;
     Blink->Flink = Entry;
     ListHead->Blink = Entry;
+}
+
+/**
+ * @brief Thsi function prints a formatted string in green color.
+ * @param Format Supplies the format specifier.
+ * @param ... Supplies additional parameters to be formatted and printed.
+ * @note This function relies on ANSI escape codes and may not work in all console environments.
+ */
+FORCEINLINE
+VOID
+RevPrint(
+    const wchar_t *Format,
+    ...
+)
+{
+    va_list args;
+
+    wprintf(L"\033[32m");
+    va_start(args, Format);
+    vwprintf(Format, args);
+    va_end(args);
+    wprintf(L"\033[0m");
 }
 
 /**
@@ -1803,6 +1814,27 @@ Exit:
     return status;
 }
 
+VOID
+RevDumpRevisionRecordList(
+    VOID
+    )
+{
+    PLIST_ENTRY entry;
+    RevPrint(L"%-20s%-10s\n", L"File Type", L"Total Lines of Code");
+    RevPrint(L"---------------------------------------\n");
+    for (entry = Revision->RevisionRecordListHead.Flink;
+         entry != &Revision->RevisionRecordListHead;
+         entry = entry->Flink) {
+        PREVISION_RECORD revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
+        if (revisionRecord) {
+            RevPrint(L"%-20s%-10d\n",
+                     revisionRecord->ExtensionMapping.LanguageOrType,
+                     revisionRecord->CountOfLines);
+        }
+    }
+    RevPrint(L"---------------------------------------\n");
+}
+
 int
 wmain(
     int argc,
@@ -1814,7 +1846,7 @@ wmain(
     PWCHAR revisionPath = NULL;
     REVISION_INIT_PARAMS revisionInitParams;
 
-    wprintf(WelcomeString);
+    RevPrint(WelcomeString);
 
     /*
      * Process the command line arguments if any.
@@ -1825,7 +1857,7 @@ wmain(
          * The command line arguments were not passed at all, so a folder selection dialog
          * should be opened where the user can select a directory to perform the revision.
          */
-        wprintf(UsageString);
+        RevPrint(UsageString);
         status = -1;
         goto Exit;
     }
@@ -1884,9 +1916,15 @@ wmain(
 
     end = __rdtsc();
 
-    printf("TotalCountOfLines: %llu", Revision->TotalCountOfLines);
+    /*
+     * Print the result statistics.
+     */
+
+    RevPrint(L"Ticks:\t%lld\n\n", end - start);
+
     RevDumpRevisionRecordList();
-    printf(" (in %lld ticks)\n", end - start);
+
+    RevPrint(L"TotalCountOfLines:\t%llu\n", Revision->TotalCountOfLines);
 
 Exit:
     free(revisionPath);
