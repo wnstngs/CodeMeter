@@ -73,6 +73,8 @@ typedef struct REVISION_RECORD_EXTENSION_MAPPING {
  * @brief This structure stores statistics for some specific file extension.
  */
 typedef struct REVISION_RECORD {
+    LIST_ENTRY ListEntry;
+
     /*
      * Extension of the revision record file and recognized programming language/file
      * type based on extension.
@@ -100,14 +102,9 @@ typedef struct REVISION {
     ULONGLONG TotalCountOfLines;
 
     /*
-     * Head of the list of revision records for each extension.
+     * List of revision records.
      */
-    PREVISION_RECORD HeadEntry;
-
-    /*
-     * Tail of the list of revision records for each extension.
-     */
-    PREVISION_RECORD LastEntry;
+    LIST_ENTRY RevisionRecordListHead;
 } REVISION, *PREVISION;
 
 //
@@ -1170,8 +1167,33 @@ RevEnumerateRecursively(
     );
 
 /**
- * @brief This function checks if a file extension is in the extension table. File should be revised
- * only if it has valid (is in the table) extension.
+ * This function searches a table of file extension-to-language mappings to find the
+ * programming language associated with the provided file extension.
+ * @param Extension Supplies the file extension.
+ * @return If a matching file extension is found in the mapping table, the function returns
+ * the associated programming language as a string. If no match is found, the function returns NULL.
+ */
+PWCHAR
+RevMapExtensionToLanguage(
+    _In_z_ PWCHAR Extension
+    );
+
+/**
+ * @brief This function checks if a REVISION_RECORD with a given extension exists in the global
+ * revision's list of revision records.
+ * @param Extension Supplies the file extension to search for.
+ * @return If a matching REVISION_RECORD is found, returns a pointer to that record;
+ * otherwise, returns NULL.
+ */
+_Must_inspect_result_
+PREVISION_RECORD
+RevFindRevisionRecordByExtension(
+    _In_z_ PWCHAR Extension
+    );
+
+/**
+ * @brief This function checks if a file extension is in the extension table. File should
+ * be revised only if it has valid (is in the table) extension.
  * @param FilePath Supplies the path to the file to be checked.
  * @return TRUE if succeeded, FALSE if failed.
  */
@@ -1190,6 +1212,55 @@ BOOL
 RevReviseFile(
     _In_z_ PWCHAR FilePath
     );
+
+/**
+ * @brief This function initializes a LIST_ENTRY structure that represents
+ * the head of a doubly linked list.
+ * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the head of the list.
+ */
+FORCEINLINE
+VOID
+RevInitializeListHead(
+    _Inout_ PLIST_ENTRY ListHead
+    )
+{
+    ListHead->Flink = ListHead->Blink = ListHead;
+}
+
+/**
+ * @brief This function checks whether a LIST_ENTRY is empty.
+ * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the head of the list.
+ * @return TRUE if there are currently no entries in the list and FALSE otherwise.
+ */
+FORCEINLINE
+BOOL
+RevIsListEmpty(
+    _In_ PLIST_ENTRY ListHead
+    )
+{
+    return ListHead->Flink == ListHead;
+}
+
+/**
+ * @brief This function inserts an entry at the tail of a list.
+ * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the head of the list.
+ * @param Entry Supplies a pointer to a LIST_ENTRY that represents the entry to be inserted.
+ */
+FORCEINLINE
+VOID
+RevInsertTailList(
+    _In_ PLIST_ENTRY ListHead,
+    _In_ PLIST_ENTRY Entry
+    )
+{
+    PLIST_ENTRY Blink;
+
+    Blink = ListHead->Blink;
+    Entry->Flink = ListHead;
+    Entry->Blink = Blink;
+    Blink->Flink = Entry;
+    ListHead->Blink = Entry;
+}
 
 /**
  * @brief This function outputs a red text error message to the standard error stream.
@@ -1383,9 +1454,11 @@ RevInitialize(
 
     RtlZeroMemory(Revision, sizeof(REVISION));
 
+    /*
+     * Initialize the list of revision records and other fields.
+     */
+    RevInitializeListHead(&Revision->RevisionRecordListHead);
     Revision->InitParams = *InitParams;
-    Revision->HeadEntry = NULL;
-    Revision->LastEntry = Revision->HeadEntry;
     Revision->TotalCountOfLines = 0;
 
 Exit:
@@ -1409,6 +1482,81 @@ RevStart(
 
 Exit:
     return status;
+}
+
+PWCHAR
+RevMapExtensionToLanguage(
+    _In_z_ PWCHAR Extension
+    )
+{
+    LONG i = 0;
+
+    if (Extension == NULL) {
+        RevLogError("Extension is NULL.");
+        return NULL;
+    }
+
+    do {
+        if (wcscmp(Extension, ExtensionMappingTable[i].Extension) == 0) {
+            return ExtensionMappingTable[i].LanguageOrType;
+        }
+        ++i;
+    } while (i < ARRAYSIZE(ExtensionMappingTable));
+
+    return NULL;
+}
+
+_Must_inspect_result_
+PREVISION_RECORD
+RevFindRevisionRecordByExtension(
+    _In_z_ PWCHAR Extension
+    )
+{
+    PLIST_ENTRY entry;
+    PREVISION_RECORD revisionRecord;
+
+    if (Extension == NULL) {
+        RevLogError("Extension is NULL.");
+        return NULL;
+    }
+
+    entry = Revision->RevisionRecordListHead.Flink;
+
+    do {
+        revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
+
+        /*
+         * Check if the extension matches.
+         */
+        if (wcscmp(revisionRecord->ExtensionMapping.Extension, Extension) == 0) {
+            return revisionRecord;
+        }
+
+        entry = entry->Flink;
+
+    } while (entry != &Revision->RevisionRecordListHead);
+
+    /*
+     * If no matching extension was found, create a new revision record.
+     */
+
+    revisionRecord = (PREVISION_RECORD) malloc(sizeof(REVISION_RECORD));
+    if (revisionRecord == NULL) {
+        RevLogError("Failed to allocate revisionRecord.");
+        return NULL;
+    }
+
+    revisionRecord->ExtensionMapping.Extension = Extension;
+    revisionRecord->ExtensionMapping.LanguageOrType = RevMapExtensionToLanguage(Extension);
+    revisionRecord->CountOfLines = 0;
+    RevInitializeListHead(&revisionRecord->ListEntry);
+
+    /*
+     * Add the new revision record to the global list of revision records.
+     */
+    RevInsertTailList(&Revision->RevisionRecordListHead, &revisionRecord->ListEntry);
+
+    return NULL;
 }
 
 BOOL
@@ -1563,7 +1711,6 @@ RevShouldReviseFile(
      * Find the file extension.
      */
     fileExtension = wcsrchr(FilePath, L'.');
-
     if (fileExtension == NULL) {
         RevLogError("Failed to determine the extension for the file \"%ls\".", FilePath);
         return FALSE;
