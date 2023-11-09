@@ -1874,15 +1874,19 @@ wmain(
     else {
 
         /*
-         * Prepend L"\\?\" to the `argv[1]` to avoid the obsolete MAX_PATH limitation.
-         * TODO: Use argv[1] instead of testPath. testPath is used only for debugging.
+         * Prepend L"\\?\" to the `argv[1]` if not prepended yet to avoid the obsolete
+         * MAX_PATH limitation.
+         * TODO: Use argv[1] instead of hard-coded revisionPath.
+         * "C:\Dev\CodeMeter\tests" is used only for debugging.
          */
-        PWCHAR testPath = L"C:\\Dev\\CodeMeter\\tests";
-        revisionPath = RevStringPrepend(testPath/*argv[1]*/, MAX_PATH_FIX);
-        if (revisionPath == NULL) {
-            RevLogError("Failed to normalize the revision path (RevStringPrepend failed).");
-            status = -1;
-            goto Exit;
+        revisionPath = L"C:\\Dev\\CodeMeter\\tests"/*argv[1]*/;
+        if (wcsncmp(revisionPath, MAX_PATH_FIX, wcslen(MAX_PATH_FIX)) != 0) {
+            revisionPath = RevStringPrepend(revisionPath, MAX_PATH_FIX);
+            if (revisionPath == NULL) {
+                RevLogError("Failed to normalize the revision path (RevStringPrepend failed).");
+                status = -1;
+                goto Exit;
+            }
         }
 
         /*
