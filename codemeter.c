@@ -1182,15 +1182,15 @@ RevMapExtensionToLanguage(
     );
 
 /**
- * @brief This function checks if a REVISION_RECORD with a given extension exists in the global
- * revision's list of revision records.
+ * @brief This function checks if a REVISION_RECORD for a language/file type with a given
+ * extension exists in the global revision's list of revision records.
  * @param Extension Supplies the file extension to search for.
  * @return If a matching REVISION_RECORD is found, returns a pointer to that record;
  * otherwise, returns NULL.
  */
 _Must_inspect_result_
 PREVISION_RECORD
-RevFindRevisionRecordByExtension(
+RevFindRevisionRecordForLanguageByExtension(
     _In_z_ PWCHAR Extension
     );
 
@@ -1538,15 +1538,23 @@ RevMapExtensionToLanguage(
 
 _Must_inspect_result_
 PREVISION_RECORD
-RevFindRevisionRecordByExtension(
+RevFindRevisionRecordForLanguageByExtension(
     _In_z_ PWCHAR Extension
     )
 {
     PLIST_ENTRY entry;
+    PWCHAR languageOrFileType;
     PREVISION_RECORD revisionRecord;
 
     if (Extension == NULL) {
         RevLogError("Extension is NULL.");
+        return NULL;
+    }
+
+    languageOrFileType = RevMapExtensionToLanguage(Extension);
+    if (languageOrFileType == NULL) {
+        RevLogError("No langauge/file type match was found for the extension \"%ls\".",
+                    Extension);
         return NULL;
     }
 
@@ -1556,9 +1564,9 @@ RevFindRevisionRecordByExtension(
         revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
 
         /*
-         * Check if the extension matches.
+         * Check if there is a match.
          */
-        if (wcscmp(revisionRecord->ExtensionMapping.Extension, Extension) == 0) {
+        if (wcscmp(revisionRecord->ExtensionMapping.LanguageOrType, languageOrFileType) == 0) {
             return revisionRecord;
         }
 
@@ -1566,7 +1574,8 @@ RevFindRevisionRecordByExtension(
     }
 
     /*
-     * If no matching extension was found, create a new revision record.
+     * If no matching language or file type was found for the provided extension,
+     * create a new revision record.
      */
 
     revisionRecord = (PREVISION_RECORD) malloc(sizeof(REVISION_RECORD));
@@ -1576,7 +1585,7 @@ RevFindRevisionRecordByExtension(
     }
 
     revisionRecord->ExtensionMapping.Extension = Extension;
-    revisionRecord->ExtensionMapping.LanguageOrType = RevMapExtensionToLanguage(Extension);
+    revisionRecord->ExtensionMapping.LanguageOrType = languageOrFileType;
     revisionRecord->CountOfLines = 0;
     RevInitializeListHead(&revisionRecord->ListEntry);
 
@@ -1790,7 +1799,7 @@ RevReviseFile(
         goto Exit;
     }
 
-    revisionRecord = RevFindRevisionRecordByExtension(fileExtension);
+    revisionRecord = RevFindRevisionRecordForLanguageByExtension(fileExtension);
     if (revisionRecord == NULL) {
         RevLogError("Failed to get/initialize the revision record for the file extension \"%ls\".",
                     fileExtension);
