@@ -1619,11 +1619,11 @@ RevEnumerateRecursively(
 
     /*
      * Each directory path should indicate that we are examining all files.
-     * Check if the passed RootDirectoryPath already includes the wildcard.
+     * Check if the passed RootDirectoryPath already includes the wildcard (an asterisk).
      */
-    if (wcschr(RootDirectoryPath, L'*') == NULL) {
+    if (wcsstr(RootDirectoryPath, ASTERISK) == NULL) {
         /*
-         * If no, append a wildcard character (an asterisk) to the root path.
+         * If no, append a wildcard character to the root path.
          */
         searchPath = RevStringAppend(RootDirectoryPath,
                                      ASTERISK);
