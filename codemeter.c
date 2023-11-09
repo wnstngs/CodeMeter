@@ -1500,6 +1500,7 @@ RevInitialize(
     RevInitializeListHead(&Revision->RevisionRecordListHead);
     Revision->InitParams = *InitParams;
     Revision->CountOfLinesTotal = 0;
+    Revision->CountOfLinesBlank = 0;
 
 Exit:
     return status;
@@ -1857,6 +1858,7 @@ RevDumpRevisionRecordList(
     )
 {
     PLIST_ENTRY entry;
+    RevPrint(L"-----------------------------------------------------------\n");
     RevPrint(L"%-15s%-25s%-25s\n",
              L"File Type",
              L"Blank Lines of Code",
@@ -1873,6 +1875,11 @@ RevDumpRevisionRecordList(
                      revisionRecord->CountOfLinesTotal);
         }
     }
+    RevPrint(L"-----------------------------------------------------------\n");
+    RevPrint(L"%-15s%-25u%-25u\n",
+             L"Total:",
+             Revision->CountOfLinesBlank,
+             Revision->CountOfLinesTotal);
     RevPrint(L"-----------------------------------------------------------\n");
 }
 
@@ -1969,8 +1976,6 @@ wmain(
     RevPrint(L"Ticks:\t%lld\n\n", end - start);
 
     RevDumpRevisionRecordList();
-
-    RevPrint(L"Total:\t%llu\n", Revision->CountOfLinesTotal);
 
 Exit:
     free(revisionPath);
