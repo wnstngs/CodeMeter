@@ -87,7 +87,12 @@ typedef struct REVISION_RECORD {
     /*
      * Number of lines in the revision record.
      */
-    ULONG CountOfLines;
+    ULONGLONG CountOfLinesTotal;
+
+    /*
+     * Number of blank lines in the revision record.
+     */
+    ULONGLONG CountOfLinesBlank;
 } REVISION_RECORD, *PREVISION_RECORD;
 
 /**
@@ -100,14 +105,19 @@ typedef struct REVISION {
     REVISION_INIT_PARAMS InitParams;
 
     /*
-     * Number of lines in the whole project.
-     */
-    ULONGLONG TotalCountOfLines;
-
-    /*
      * List of revision records.
      */
     LIST_ENTRY RevisionRecordListHead;
+
+    /*
+     * Number of lines in the whole project.
+     */
+    ULONGLONG CountOfLinesTotal;
+
+    /*
+     * Number of blank lines in the whole project.
+     */
+    ULONGLONG CountOfLinesBlank;
 } REVISION, *PREVISION;
 
 //
@@ -1489,7 +1499,7 @@ RevInitialize(
      */
     RevInitializeListHead(&Revision->RevisionRecordListHead);
     Revision->InitParams = *InitParams;
-    Revision->TotalCountOfLines = 0;
+    Revision->CountOfLinesTotal = 0;
 
 Exit:
     return status;
@@ -1551,6 +1561,9 @@ RevFindRevisionRecordForLanguageByExtension(
         return NULL;
     }
 
+    /*
+     * Map the provided file extension to a language or file type.
+     */
     languageOrFileType = RevMapExtensionToLanguage(Extension);
     if (languageOrFileType == NULL) {
         RevLogError("No langauge/file type match was found for the extension \"%ls\".",
@@ -1586,7 +1599,8 @@ RevFindRevisionRecordForLanguageByExtension(
 
     revisionRecord->ExtensionMapping.Extension = Extension;
     revisionRecord->ExtensionMapping.LanguageOrType = languageOrFileType;
-    revisionRecord->CountOfLines = 0;
+    revisionRecord->CountOfLinesTotal = 0;
+    revisionRecord->CountOfLinesBlank = 0;
     RevInitializeListHead(&revisionRecord->ListEntry);
 
     /*
@@ -1755,6 +1769,9 @@ RevShouldReviseFile(
         return FALSE;
     }
 
+    /*
+     * Check if the extension matches any entries in the ExtensionMappingTable.
+     */
     for (i = 0; i < ARRAYSIZE(ExtensionMappingTable); ++i) {
         if (wcscmp(ExtensionMappingTable[i].Extension, fileExtension) == 0) {
             return TRUE;
@@ -1774,7 +1791,7 @@ RevReviseFile(
      * TODO: `WCHAR lineBuffer[4096];` - A string buffer with such a fixed size is not appropriate.
      */
     BOOL status = TRUE;
-    ULONGLONG lineCount = 0;
+    ULONGLONG lineCountTotal = 0, lineCountBlank = 0;
     WCHAR lineBuffer[4096];
     PWCHAR fileExtension;
     FILE *file;
@@ -1787,7 +1804,15 @@ RevReviseFile(
     }
 
     while (fgetws(lineBuffer, ARRAYSIZE(lineBuffer), file) != NULL) {
-        ++lineCount;
+
+        ++lineCountTotal;
+
+        /*
+         * If the line is blank, count it.
+         */
+        if (wcslen(lineBuffer) <= 1) {
+            ++lineCountBlank;
+        }
     }
 
     /*
@@ -1811,12 +1836,14 @@ RevReviseFile(
     /*
      * Update the count of lines for the extension.
      */
-    revisionRecord->CountOfLines += lineCount;
+    revisionRecord->CountOfLinesTotal += lineCountTotal;
+    revisionRecord->CountOfLinesBlank += lineCountBlank;
 
     /*
-     * Update the total count of lines.
+     * Update the count of lines for the revision.
      */
-    Revision->TotalCountOfLines += lineCount;
+    Revision->CountOfLinesTotal += lineCountTotal;
+    Revision->CountOfLinesBlank += lineCountBlank;
 
     fclose(file);
 
@@ -1830,19 +1857,23 @@ RevDumpRevisionRecordList(
     )
 {
     PLIST_ENTRY entry;
-    RevPrint(L"%-20s%-10s\n", L"File Type", L"Total Lines of Code");
-    RevPrint(L"---------------------------------------\n");
+    RevPrint(L"%-15s%-25s%-25s\n",
+             L"File Type",
+             L"Blank Lines of Code",
+             L"Total Lines of Code");
+    RevPrint(L"-----------------------------------------------------------\n");
     for (entry = Revision->RevisionRecordListHead.Flink;
          entry != &Revision->RevisionRecordListHead;
          entry = entry->Flink) {
         PREVISION_RECORD revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
         if (revisionRecord) {
-            RevPrint(L"%-20s%-10d\n",
+            RevPrint(L"%-15s%-25d%-25d\n",
                      revisionRecord->ExtensionMapping.LanguageOrType,
-                     revisionRecord->CountOfLines);
+                     revisionRecord->CountOfLinesBlank,
+                     revisionRecord->CountOfLinesTotal);
         }
     }
-    RevPrint(L"---------------------------------------\n");
+    RevPrint(L"-----------------------------------------------------------\n");
 }
 
 int
@@ -1881,6 +1912,7 @@ wmain(
          */
         revisionPath = L"C:\\Dev\\CodeMeter\\tests"/*argv[1]*/;
         if (wcsncmp(revisionPath, MAX_PATH_FIX, wcslen(MAX_PATH_FIX)) != 0) {
+
             revisionPath = RevStringPrepend(revisionPath, MAX_PATH_FIX);
             if (revisionPath == NULL) {
                 RevLogError("Failed to normalize the revision path (RevStringPrepend failed).");
@@ -1938,7 +1970,7 @@ wmain(
 
     RevDumpRevisionRecordList();
 
-    RevPrint(L"TotalCountOfLines:\t%llu\n", Revision->TotalCountOfLines);
+    RevPrint(L"Total:\t%llu\n", Revision->CountOfLinesTotal);
 
 Exit:
     free(revisionPath);
