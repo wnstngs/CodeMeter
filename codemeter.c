@@ -1618,20 +1618,21 @@ RevEnumerateRecursively(
     }
 
     /*
-     * Create the search pattern:
-     *
-     * Each directory path should indicate that we are examining all files,
-     * Append a wildcard character (an asterisk) to the root path for this purpose.
-     *
-     * TODO: Check if the passed RootDirectoryPath already includes the wildcard.
+     * Each directory path should indicate that we are examining all files.
+     * Check if the passed RootDirectoryPath already includes the wildcard.
      */
-    searchPath = RevStringAppend(RootDirectoryPath,
-                                 ASTERISK);
-    if (searchPath == NULL) {
-        RevLogError("Failed to normalize the revision subdirectory path "
-                    "(RevStringAppend failed).");
-        status = FALSE;
-        goto Exit;
+    if (wcschr(RootDirectoryPath, L'*') == NULL) {
+        /*
+         * If no, append a wildcard character (an asterisk) to the root path.
+         */
+        searchPath = RevStringAppend(RootDirectoryPath,
+                                     ASTERISK);
+        if (searchPath == NULL) {
+            RevLogError("Failed to normalize the revision subdirectory path "
+                        "(RevStringAppend failed).");
+            status = FALSE;
+            goto Exit;
+        }
     }
 
     /*
