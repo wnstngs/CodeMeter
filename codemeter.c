@@ -30,7 +30,6 @@ Author:
 
 #include <stdio.h>
 #include <malloc.h>
-#include <time.h>
 
 #ifndef UNICODE
 #define UNICODE
@@ -1107,6 +1106,11 @@ REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
  */
 PREVISION Revision = NULL;
 
+/*
+ * Indicates whether ANSI escape sequences are supported.
+ */
+BOOL SupportAnsi;
+
 //
 // -------------------------------------------------------- Function Prototypes
 //
@@ -1322,25 +1326,30 @@ RevPrint(
 {
     va_list args;
 
-    wprintf(L"\033[32m");
+    if (SupportAnsi) {
+        wprintf(L"\033[32m");
+    }
     va_start(args, Format);
     vwprintf(Format, args);
     va_end(args);
-    wprintf(L"\033[0m");
+    if (SupportAnsi) {
+        wprintf(L"\033[0m");
+    }
 }
 
 /**
  * @brief This function outputs a red text error message to the standard error stream.
  * @param Message Supplies the error message.
  */
-#define RevLogError(Message, ...)                                   \
-    do {                                                            \
-        fprintf(stderr,                                             \
-                "\033[0;31m[ERROR]\n└───> (in %s@%d): " Message,    \
-                __FUNCTION__,                                       \
-                __LINE__,                                           \
-                ##__VA_ARGS__);                                     \
-        printf("\033[0m\n");                                        \
+#define RevLogError(Message, ...)                                               \
+    do {                                                                        \
+        fprintf(stderr,                                                         \
+                SupportAnsi ?                                                   \
+                "\033[0;31m[ERROR]\n└───> (in %s@%d): " Message "\033[0m\n" :   \
+                "[ERROR]\n└───> (in %s@%d): " Message "\n",                     \
+                __FUNCTION__,                                                   \
+                __LINE__,                                                       \
+                ##__VA_ARGS__);                                                 \
     } while (0)
 
 //
@@ -1920,7 +1929,7 @@ RevOutputRevisionStatistics(
      * The table header.
      */
     RevPrint(L"--------------------------------------------------------------------------\n");
-    RevPrint(L"%-15s%-15s%-25s%-25s\n",
+    RevPrint(L"%-18s%-10s%-22s%-25s\n",
              L"File Type",
              L"Files",
              L"Blank Lines of Code",
@@ -1936,7 +1945,7 @@ RevOutputRevisionStatistics(
 
         revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
         if (revisionRecord) {
-            RevPrint(L"%-15s%-15u%-25u%-25u\n",
+            RevPrint(L"%-18s%-10u%-22u%-25u\n",
                      revisionRecord->ExtensionMapping.LanguageOrFileType,
                      revisionRecord->CountOfFiles,
                      revisionRecord->CountOfLinesBlank,
@@ -1948,7 +1957,7 @@ RevOutputRevisionStatistics(
      * The table footer with total statistics.
      */
     RevPrint(L"--------------------------------------------------------------------------\n");
-    RevPrint(L"%-15s%-15u%-25u%-25u\n",
+    RevPrint(L"%-18s%-10u%-22u%-25u\n",
              L"Total:",
              Revision->CountOfFiles,
              Revision->CountOfLinesBlank,
@@ -1969,6 +1978,9 @@ wmain(
     LARGE_INTEGER frequency;
     PWCHAR revisionPath = NULL;
     REVISION_INIT_PARAMS revisionInitParams;
+
+    SupportAnsi = SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE),
+                                 ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
 
     RevPrint(WelcomeString);
 
