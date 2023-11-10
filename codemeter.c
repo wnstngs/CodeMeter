@@ -30,6 +30,7 @@ Author:
 
 #include <stdio.h>
 #include <malloc.h>
+#include <time.h>
 
 #ifndef UNICODE
 #define UNICODE
@@ -1327,7 +1328,8 @@ RevGetLastKnownWin32Error(
     )
 {
     PWCHAR messageBuffer;
-    DWORD lastKnownError = GetLastError(), formatResult;
+    DWORD formatResult;
+    const DWORD lastKnownError = GetLastError();
 
     /*
      * Attempt to format the error code into a human-readable string.
@@ -1355,7 +1357,7 @@ RevGetLastKnownWin32Error(
 
         swprintf_s(messageBuffer,
                    (5 + 1),
-                   L"%d",
+                   L"%lu",
                    lastKnownError);
     }
 
@@ -1753,7 +1755,7 @@ RevShouldReviseFile(
     _In_z_ PWCHAR FilePath
     )
 {
-    LONG i, tableSize;
+    LONG i;
     PWCHAR fileExtension;
 
     if (FilePath == NULL) {
@@ -1826,6 +1828,11 @@ RevReviseFile(
         goto Exit;
     }
 
+    /*
+     * If there is a revision recourd for that language/file type in the revision
+     * record list, we will update it. If this file type has not been encountered,
+     * we create a new node for it in the list.
+     */
     revisionRecord = RevFindRevisionRecordForLanguageByExtension(fileExtension);
     if (revisionRecord == NULL) {
         RevLogError("Failed to get/initialize the revision record for the file extension \"%ls\".",
@@ -1858,16 +1865,20 @@ RevDumpRevisionRecordList(
     )
 {
     PLIST_ENTRY entry;
+    PREVISION_RECORD revisionRecord;
+
     RevPrint(L"-----------------------------------------------------------\n");
     RevPrint(L"%-15s%-25s%-25s\n",
              L"File Type",
              L"Blank Lines of Code",
              L"Total Lines of Code");
     RevPrint(L"-----------------------------------------------------------\n");
+
     for (entry = Revision->RevisionRecordListHead.Flink;
          entry != &Revision->RevisionRecordListHead;
          entry = entry->Flink) {
-        PREVISION_RECORD revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
+
+        revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
         if (revisionRecord) {
             RevPrint(L"%-15s%-25d%-25d\n",
                      revisionRecord->ExtensionMapping.LanguageOrType,
@@ -1875,6 +1886,7 @@ RevDumpRevisionRecordList(
                      revisionRecord->CountOfLinesTotal);
         }
     }
+
     RevPrint(L"-----------------------------------------------------------\n");
     RevPrint(L"%-15s%-25u%-25u\n",
              L"Total:",
@@ -1890,7 +1902,10 @@ wmain(
     )
 {
     int status = 0;
-    ULONGLONG start, end;
+    BOOL measuringTime = TRUE;
+    LARGE_INTEGER startQpc;
+    LARGE_INTEGER endQpc;
+    LARGE_INTEGER frequency;
     PWCHAR revisionPath = NULL;
     REVISION_INIT_PARAMS revisionInitParams;
 
@@ -1951,29 +1966,38 @@ wmain(
     }
 
     /*
-     * Initialize the directory revision process.
+     * Initialize the revision engine.
      */
-    if (!RevInitialize(&revisionInitParams)) {
-        RevLogError("RevInitialize failed.");
-        status = -1;
+    status = RevInitialize(&revisionInitParams);
+    if (status == FALSE) {
+        RevLogError("Failed to initialize the revision engine.");
         goto Exit;
     }
 
-    start = __rdtsc();
+    if (!QueryPerformanceFrequency(&frequency)) {
+        RevLogError("Failed to retrieves the frequency of the performance counter.");
+        measuringTime = FALSE;
+    }
 
-    if (!RevStart()) {
-        RevLogError("RevStart failed.");
-        status = -1;
+    if (measuringTime) {
+        QueryPerformanceCounter(&startQpc);
+    }
+
+    status = RevStart();
+    if (status == FALSE) {
+        RevLogError("Failed to start the revision engine.");
         goto Exit;
     }
 
-    end = __rdtsc();
+    if (measuringTime) {
+        QueryPerformanceCounter(&endQpc);
 
-    /*
-     * Print the result statistics.
-     */
+        /*
+         * Print the result statistics.
+         */
 
-    RevPrint(L"Ticks:\t%lld\n\n", end - start);
+        RevPrint(L"Time: %.3fs\n", (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart);
+    }
 
     RevDumpRevisionRecordList();
 
