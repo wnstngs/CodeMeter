@@ -67,7 +67,7 @@ typedef struct REVISION_RECORD_EXTENSION_MAPPING {
     /*
      * Programming language or file type.
      */
-    _Field_z_ PWCHAR LanguageOrType;
+    _Field_z_ PWCHAR LanguageOrFileType;
 } REVISION_RECORD_EXTENSION_MAPPING, *PREVISION_RECORD_EXTENSION_MAPPING;
 
 /**
@@ -94,6 +94,11 @@ typedef struct REVISION_RECORD {
      * Number of blank lines in the revision record.
      */
     ULONGLONG CountOfLinesBlank;
+
+    /*
+     * Number of files in the revision record.
+     */
+    ULONG CountOfFiles;
 } REVISION_RECORD, *PREVISION_RECORD;
 
 /**
@@ -119,6 +124,11 @@ typedef struct REVISION {
      * Number of blank lines in the whole project.
      */
     ULONGLONG CountOfLinesBlank;
+
+    /*
+     * Number of files in the whole project.
+     */
+    ULONG CountOfFiles;
 } REVISION, *PREVISION;
 
 //
@@ -1503,6 +1513,7 @@ RevInitialize(
     Revision->InitParams = *InitParams;
     Revision->CountOfLinesTotal = 0;
     Revision->CountOfLinesBlank = 0;
+    Revision->CountOfFiles = 0;
 
 Exit:
     return status;
@@ -1541,7 +1552,7 @@ RevMapExtensionToLanguage(
 
     do {
         if (wcscmp(Extension, ExtensionMappingTable[i].Extension) == 0) {
-            return ExtensionMappingTable[i].LanguageOrType;
+            return ExtensionMappingTable[i].LanguageOrFileType;
         }
         ++i;
     } while (i < ARRAYSIZE(ExtensionMappingTable));
@@ -1582,7 +1593,7 @@ RevFindRevisionRecordForLanguageByExtension(
         /*
          * Check if there is a match.
          */
-        if (wcscmp(revisionRecord->ExtensionMapping.LanguageOrType, languageOrFileType) == 0) {
+        if (wcscmp(revisionRecord->ExtensionMapping.LanguageOrFileType, languageOrFileType) == 0) {
             return revisionRecord;
         }
 
@@ -1601,9 +1612,10 @@ RevFindRevisionRecordForLanguageByExtension(
     }
 
     revisionRecord->ExtensionMapping.Extension = Extension;
-    revisionRecord->ExtensionMapping.LanguageOrType = languageOrFileType;
+    revisionRecord->ExtensionMapping.LanguageOrFileType = languageOrFileType;
     revisionRecord->CountOfLinesTotal = 0;
     revisionRecord->CountOfLinesBlank = 0;
+    revisionRecord->CountOfFiles = 0;
     RevInitializeListHead(&revisionRecord->ListEntry);
 
     /*
@@ -1846,12 +1858,14 @@ RevReviseFile(
      */
     revisionRecord->CountOfLinesTotal += lineCountTotal;
     revisionRecord->CountOfLinesBlank += lineCountBlank;
+    revisionRecord->CountOfFiles += 1;
 
     /*
      * Update the count of lines for the revision.
      */
     Revision->CountOfLinesTotal += lineCountTotal;
     Revision->CountOfLinesBlank += lineCountBlank;
+    Revision->CountOfFiles += 1;
 
     fclose(file);
 
@@ -1867,12 +1881,13 @@ RevDumpRevisionRecordList(
     PLIST_ENTRY entry;
     PREVISION_RECORD revisionRecord;
 
-    RevPrint(L"-----------------------------------------------------------\n");
-    RevPrint(L"%-15s%-25s%-25s\n",
+    RevPrint(L"--------------------------------------------------------------------------\n");
+    RevPrint(L"%-15s%-15s%-25s%-25s\n",
              L"File Type",
+             L"Files",
              L"Blank Lines of Code",
              L"Total Lines of Code");
-    RevPrint(L"-----------------------------------------------------------\n");
+    RevPrint(L"--------------------------------------------------------------------------\n");
 
     for (entry = Revision->RevisionRecordListHead.Flink;
          entry != &Revision->RevisionRecordListHead;
@@ -1880,19 +1895,21 @@ RevDumpRevisionRecordList(
 
         revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
         if (revisionRecord) {
-            RevPrint(L"%-15s%-25d%-25d\n",
-                     revisionRecord->ExtensionMapping.LanguageOrType,
+            RevPrint(L"%-15s%-15u%-25u%-25u\n",
+                     revisionRecord->ExtensionMapping.LanguageOrFileType,
+                     revisionRecord->CountOfFiles,
                      revisionRecord->CountOfLinesBlank,
                      revisionRecord->CountOfLinesTotal);
         }
     }
 
-    RevPrint(L"-----------------------------------------------------------\n");
-    RevPrint(L"%-15s%-25u%-25u\n",
+    RevPrint(L"--------------------------------------------------------------------------\n");
+    RevPrint(L"%-15s%-15u%-25u%-25u\n",
              L"Total:",
+             Revision->CountOfFiles,
              Revision->CountOfLinesBlank,
              Revision->CountOfLinesTotal);
-    RevPrint(L"-----------------------------------------------------------\n");
+    RevPrint(L"--------------------------------------------------------------------------\n");
 }
 
 int
