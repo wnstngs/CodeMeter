@@ -1169,12 +1169,25 @@ RevInitialize(
  * @brief This function is responsible for starting the revision system. It
  * ensures that the system has been initialized correctly before proceeding
  * with its operations.
-= * @return TRUE if succeeded, FALSE if failed.
+ * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
 BOOL
 RevStart(
     VOID
+    );
+
+/**
+ * @brief This function initializes a REVISION_RECORD structure.
+ * @param Extension Supplies the file extension of the revision record.
+ * @param LanguageOrFileType Supplies the language or file type of the revision record.
+ * @return If the initialization is successful, returns a pointer to the new revision record; otherwise, NULL.
+ */
+_Must_inspect_result_
+PREVISION_RECORD
+RevInitializeRevisionRecord(
+    _In_z_ PWCHAR Extension,
+    _In_z_ PWCHAR LanguageOrFileType
     );
 
 /**
@@ -1541,6 +1554,30 @@ Exit:
     return status;
 }
 
+PREVISION_RECORD
+RevInitializeRevisionRecord(
+    _In_z_ PWCHAR Extension,
+    _In_z_ PWCHAR LanguageOrFileType
+    )
+{
+    PREVISION_RECORD revisionRecord;
+
+    revisionRecord = (PREVISION_RECORD) malloc(sizeof(REVISION_RECORD));
+    if (revisionRecord == NULL) {
+        RevLogError("Failed to allocate revisionRecord.");
+        return NULL;
+    }
+
+    revisionRecord->ExtensionMapping.Extension = Extension;
+    revisionRecord->ExtensionMapping.LanguageOrFileType = LanguageOrFileType;
+    revisionRecord->CountOfLinesTotal = 0;
+    revisionRecord->CountOfLinesBlank = 0;
+    revisionRecord->CountOfFiles = 0;
+    RevInitializeListHead(&revisionRecord->ListEntry);
+
+    return revisionRecord;
+}
+
 PWCHAR
 RevMapExtensionToLanguage(
     _In_z_ PWCHAR Extension
@@ -1605,21 +1642,16 @@ RevFindRevisionRecordForLanguageByExtension(
 
     /*
      * If no matching language or file type was found for the provided extension,
-     * create a new revision record.
+     * initialize a new revision record.
      */
-
-    revisionRecord = (PREVISION_RECORD) malloc(sizeof(REVISION_RECORD));
+    revisionRecord = RevInitializeRevisionRecord(Extension,
+                                                 languageOrFileType);
     if (revisionRecord == NULL) {
-        RevLogError("Failed to allocate revisionRecord.");
+        RevLogError("Failed to initialize a revision record (\"%ls\", \"%ls\").",
+                    Extension,
+                    languageOrFileType);
         return NULL;
     }
-
-    revisionRecord->ExtensionMapping.Extension = Extension;
-    revisionRecord->ExtensionMapping.LanguageOrFileType = languageOrFileType;
-    revisionRecord->CountOfLinesTotal = 0;
-    revisionRecord->CountOfLinesBlank = 0;
-    revisionRecord->CountOfFiles = 0;
-    RevInitializeListHead(&revisionRecord->ListEntry);
 
     /*
      * Add the new revision record to the global list of revision records.
