@@ -1237,8 +1237,11 @@ RevReviseFile(
     _In_z_ PWCHAR FilePath
     );
 
+/**
+ * @brief This function outputs the revision statistics to the console.
+ */
 VOID
-RevDumpRevisionRecordList(
+RevOutputRevisionStatistics(
     VOID
     );
 
@@ -1874,13 +1877,16 @@ Exit:
 }
 
 VOID
-RevDumpRevisionRecordList(
+RevOutputRevisionStatistics(
     VOID
     )
 {
     PLIST_ENTRY entry;
     PREVISION_RECORD revisionRecord;
 
+    /*
+     * The table header.
+     */
     RevPrint(L"--------------------------------------------------------------------------\n");
     RevPrint(L"%-15s%-15s%-25s%-25s\n",
              L"File Type",
@@ -1889,6 +1895,9 @@ RevDumpRevisionRecordList(
              L"Total Lines of Code");
     RevPrint(L"--------------------------------------------------------------------------\n");
 
+    /*
+     * Iterate through the revision record list and print statistics for each file type.
+     */
     for (entry = Revision->RevisionRecordListHead.Flink;
          entry != &Revision->RevisionRecordListHead;
          entry = entry->Flink) {
@@ -1903,6 +1912,9 @@ RevDumpRevisionRecordList(
         }
     }
 
+    /*
+     * The table footer with total statistics.
+     */
     RevPrint(L"--------------------------------------------------------------------------\n");
     RevPrint(L"%-15s%-15u%-25u%-25u\n",
              L"Total:",
@@ -2016,7 +2028,7 @@ wmain(
         RevPrint(L"Time: %.3fs\n", (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart);
     }
 
-    RevDumpRevisionRecordList();
+    RevOutputRevisionStatistics();
 
 Exit:
     free(revisionPath);
