@@ -37,6 +37,7 @@ Author:
 
 #define WIN32_LEAN_AND_MEAN
 
+#include <stdlib.h>
 #include <Windows.h>
 
 //
@@ -1670,6 +1671,7 @@ RevFindRevisionRecordForLanguageByExtension(
     return revisionRecord;
 }
 
+_Must_inspect_result_
 BOOL
 RevEnumerateRecursively(
     _In_z_ PWCHAR RootDirectoryPath
@@ -1787,8 +1789,7 @@ RevEnumerateRecursively(
              * but for file revision the full path (subdirectoryPath) is required.
              */
             if (RevShouldReviseFile(findFileData.cFileName)) {
-                fileRevisionResult = RevReviseFile(subdirectoryPath);
-                if (!fileRevisionResult) {
+                if (!RevReviseFile(subdirectoryPath)) {
                     RevLogError("RevReviseFile failed to revise the file \"%ls\".", subdirectoryPath);
                 }
             }
@@ -1806,6 +1807,7 @@ Exit:
     return status;
 }
 
+_Must_inspect_result_
 BOOL
 RevShouldReviseFile(
     _In_z_ PWCHAR FilePath
@@ -1840,38 +1842,94 @@ RevShouldReviseFile(
     return FALSE;
 }
 
+_Must_inspect_result_
 BOOL
 RevReviseFile(
     _In_z_ PWCHAR FilePath
     )
 {
     /*
-     * TODO: Use Win32.
-     * TODO: `WCHAR lineBuffer[4096];` - A string buffer with such a fixed size is not appropriate.
+     * TODO: Count blank lines.
      */
     BOOL status = TRUE;
-    ULONGLONG lineCountTotal = 0, lineCountBlank = 0;
-    WCHAR lineBuffer[4096];
-    PWCHAR fileExtension;
-    FILE *file;
     PREVISION_RECORD revisionRecord;
+    ULONGLONG lineCountTotal = 0;
+    ULONGLONG lineCountBlank = 0;
+    PCHAR fileBuffer = NULL;
+    PWCHAR fileExtension;
+    HANDLE file;
+    LARGE_INTEGER fileSize;
+    DWORD bytesRead;
+    LONG i;
 
-    if (_wfopen_s(&file, FilePath, L"r") != 0 || file == NULL) {
-        RevLogError("Failed to open the file \"%ls\".", FilePath);
+    /*
+     * Attempt to open the file.
+     */
+    file = CreateFile(FilePath,
+                      GENERIC_READ,
+                      FILE_SHARE_READ,
+                      NULL,
+                      OPEN_EXISTING,
+                      FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+                      NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        RevLogError("Failed to open the file \"%ls\". The last known error: %ls.",
+                    FilePath,
+                    RevGetLastKnownWin32Error());
         status = FALSE;
         goto Exit;
     }
 
-    while (fgetws(lineBuffer, ARRAYSIZE(lineBuffer), file) != NULL) {
+    /*
+     * Retrieve the size of the file
+     */
+    if (!GetFileSizeEx(file, &fileSize)) {
+        RevLogError("Failed to retrieve the size of the file \"%ls\". The last known error: %ls.",
+                    FilePath,
+                    RevGetLastKnownWin32Error());
+        status = FALSE;
+        goto Exit;
+    }
 
-        ++lineCountTotal;
+    /*
+     * Allocate buffer for the entire file.
+     */
+    fileBuffer = (PCHAR)malloc(fileSize.QuadPart * sizeof(CHAR));
+    if (fileBuffer == NULL) {
+        RevLogError("Failed to allocate a line buffer (%d bytes)",
+                    fileSize.QuadPart * sizeof(CHAR));
+        status = FALSE;
+        goto Exit;
+    }
 
-        /*
-         * If the line is blank, count it.
-         */
-        if (wcslen(lineBuffer) <= 1) {
-            ++lineCountBlank;
+    /*
+     * Attempt to read the file.
+     */
+    if (!ReadFile(file,
+                  fileBuffer,
+                  fileSize.QuadPart * sizeof(CHAR),
+                  &bytesRead,
+                  NULL)) {
+        RevLogError("Failed to read the file \"%ls\". The last known error: %ls.",
+                    FilePath,
+                    RevGetLastKnownWin32Error());
+        status = FALSE;
+        goto Exit;
+    }
+
+    /*
+     * Count lines.
+     */
+    for (i = 0; i < bytesRead; i++) {
+        if (fileBuffer[i] == '\n') {
+            ++lineCountTotal;
         }
+    }
+    if (fileSize.QuadPart > 0) {
+        /*
+         * Count the last line if the file is not empty.
+         */
+        ++lineCountTotal;
     }
 
     /*
@@ -1911,9 +1969,13 @@ RevReviseFile(
     Revision->CountOfLinesBlank += lineCountBlank;
     Revision->CountOfFiles += 1;
 
-    fclose(file);
+    CloseHandle(file);
 
 Exit:
+    if (fileBuffer) {
+        free(fileBuffer);
+    }
+
     return status;
 }
 
@@ -2073,6 +2135,8 @@ wmain(
     }
 
     RevOutputRevisionStatistics();
+
+    system("pause");
 
 Exit:
     free(revisionPath);
