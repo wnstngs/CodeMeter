@@ -131,6 +131,18 @@ typedef struct REVISION {
     ULONG CountOfFiles;
 } REVISION, *PREVISION;
 
+/**
+ * @brief This enumeration represents different console text colors.
+ */
+typedef enum _CONSOLE_FOREGROUND_COLOR {
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan
+} CONSOLE_FOREGROUND_COLOR;
+
 //
 // ------------------------------------------------------ Constants and Globals
 //
@@ -157,10 +169,35 @@ const WCHAR UsageString[] =
     "CodeMeter.exe \"C:\\\\MyProject\\\"\n\n";
 
 /**
+ * @brief This array holds ANSI escape sequences for changing text color
+ * in the console for each corresponding CONSOLE_FOREGROUND_COLOR.
+ * @note The order must be the same as in the enumeration CONSOLE_FOREGROUND_COLOR.
+ */
+const PWCHAR ConsoleForegroundColors[] = {
+    /* Red */
+    L"\x1b[31m",
+
+    /* Green */
+    L"\x1b[32m",
+
+    /* Yellow */
+    L"\x1b[33m",
+
+    /* Blue */
+    L"\x1b[34m",
+
+    /* Magenta */
+    L"\x1b[35m",
+
+    /* Cyan */
+    L"\x1b[36m"
+};
+
+/**
  * @brief Mapping of file extensions that can be recognized to human-readable descriptions of file types.
  *
- * FIXME: Multi-dot extensions are commented out, we need to add support for them.
- * The current algorithm counts everything after the last dot as an extension.
+ * TODO: Multi-dot extensions are commented out, we need to add support for them.
+         The current algorithm counts everything after the last dot as an extension.
  */
 REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".abap",               L"ABAP"},
@@ -1313,22 +1350,24 @@ RevInsertTailList(
 }
 
 /**
- * @brief Thsi function prints a formatted string in green color.
+ * @brief This function prints a formatted string in the specified color.
+ * @param Color Supplies the text foreground color.
  * @param Format Supplies the format specifier.
  * @param ... Supplies additional parameters to be formatted and printed.
- * @note This function relies on ANSI escape codes and may not work in all console environments.
  */
 FORCEINLINE
 VOID
-RevPrint(
-    const wchar_t *Format,
+RevPrintEx(
+    CONSOLE_FOREGROUND_COLOR Color,
+    const PWCHAR Format,
     ...
 )
 {
     va_list args;
+    const PWCHAR color = ConsoleForegroundColors[Color];
 
     if (SupportAnsi) {
-        wprintf(L"\033[32m");
+        wprintf(color);
     }
     va_start(args, Format);
     vwprintf(Format, args);
@@ -1337,6 +1376,16 @@ RevPrint(
         wprintf(L"\033[0m");
     }
 }
+
+/**
+ * @brief This function prints a formatted string in [default] green color.
+ * @param Format Supplies the format specifier.
+ * @param ... Supplies additional parameters to be formatted and printed.
+ */
+#define RevPrint(Format, ...)                                                   \
+    do {                                                                        \
+        RevPrintEx(Green, Format, __VA_ARGS__);                                 \
+    } while (0)
 
 /**
  * @brief This function outputs a red text error message to the standard error stream.
@@ -2140,15 +2189,13 @@ wmain(
 
     if (measuringTime) {
         QueryPerformanceCounter(&endQpc);
-
-        /*
-         * Print the result statistics.
-         */
-
-        RevPrint(L"Time: %.3fs\n", (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart);
     }
 
     RevOutputRevisionStatistics();
+
+    RevPrintEx(Cyan,
+               L"Time: %.3fs\n",
+               (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart);
 
     system("pause");
 
