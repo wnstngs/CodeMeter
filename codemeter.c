@@ -1738,7 +1738,7 @@ RevEnumerateRecursively(
     _In_z_ PWCHAR RootDirectoryPath
     )
 {
-    BOOL status = TRUE, fileRevisionResult;
+    BOOL status = TRUE;
     HANDLE findFile = INVALID_HANDLE_VALUE;
     WIN32_FIND_DATAW findFileData;
     PWCHAR subdirectoryPath = NULL;
@@ -1909,9 +1909,6 @@ RevReviseFile(
     _In_z_ PWCHAR FilePath
     )
 {
-    /*
-     * TODO: Count blank lines.
-     */
     BOOL status = TRUE;
     PREVISION_RECORD revisionRecord;
     ULONGLONG lineCountTotal = 0;
@@ -1921,6 +1918,9 @@ RevReviseFile(
     HANDLE file;
     LARGE_INTEGER fileSize;
     DWORD bytesRead;
+    BOOL isPreviousCharCarriageReturn;
+    BOOL isNextCharCarriageReturn;
+    BOOL isNextCharNewline;
     LONG i;
 
     /*
@@ -1978,23 +1978,50 @@ RevReviseFile(
         goto Exit;
     }
 
-    /*
-     * Count lines.
-     */
     for (i = 0; i < bytesRead; i++) {
         if (fileBuffer[i] == '\n') {
+
+            /*
+             * Increments the total line count for every newline
+             * character encountered.
+             */
             ++lineCountTotal;
 
-            if (fileBuffer[i + 1] == '\n') {
+            /* Check if the previous character is a carriage return character. */
+            isPreviousCharCarriageReturn = (i > 0) && (fileBuffer[i - 1] == '\r');
+
+            /* Check if the next character is a carriage return character. */
+            isNextCharCarriageReturn = (i < bytesRead - 2) && (fileBuffer[i + 1] == '\r');
+
+            /* Check if the character after the next one is a newline character. */
+            isNextCharNewline = (i < bytesRead - 2) && (fileBuffer[i + 2] == '\n');
+
+            /*
+             * Check is it a blank line?
+             */
+            if (isPreviousCharCarriageReturn &&
+                isNextCharCarriageReturn &&
+                isNextCharNewline) {
+
+                /* If so, increment the blank line count. */
                 ++lineCountBlank;
             }
         }
     }
     if (fileSize.QuadPart > 0) {
         /*
-         * Count the last line if the file is not empty.
+         * Increments the total line count for the last line.
          */
         ++lineCountTotal;
+
+        /*
+         * Check if the last line is a blank line.
+         */
+        if (fileBuffer[bytesRead - 2] == '\r' &&
+            fileBuffer[bytesRead - 1] == '\n') {
+            /* If so, increment the blank line count. */
+            ++lineCountBlank;
+        }
     }
 
     /*
@@ -2132,7 +2159,7 @@ wmain(
          * TODO: Use argv[1] instead of hard-coded revisionPath.
          * "C:\Dev\CodeMeter\tests" is used only for debugging.
          */
-        revisionPath = L"C:\\Dev\\CodeMeter\\tests"/*argv[1]*/;
+        revisionPath = L"C:\\Dev\\CodeMeter\\tests2"/*argv[1]*/;
         if (wcsncmp(revisionPath, MAX_PATH_FIX, wcslen(MAX_PATH_FIX)) != 0) {
 
             revisionPath = RevStringPrepend(revisionPath, MAX_PATH_FIX);
