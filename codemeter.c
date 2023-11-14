@@ -1586,6 +1586,8 @@ RevInitialize(
     if (Revision == NULL) {
         RevLogError("Failed to allocate memory for the global revision structure (%d bytes).",
                     sizeof(REVISION));
+        status = FALSE;
+        goto Exit;
     }
 
     RtlZeroMemory(Revision, sizeof(REVISION));
