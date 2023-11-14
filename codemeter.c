@@ -1139,13 +1139,13 @@ REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".zsh",                L"zsh"},
 };
 
-/*
- * The global revision state used throughout the entire program run-time.
+/**
+ * @brief The global revision state used throughout the entire program run-time.
  */
 PREVISION Revision = NULL;
 
-/*
- * Indicates whether ANSI escape sequences are supported.
+/**
+ * @brief Indicates whether ANSI escape sequences are supported.
  */
 BOOL SupportAnsi;
 
@@ -2032,9 +2032,9 @@ RevReviseFile(
     Revision->CountOfLinesBlank += lineCountBlank;
     Revision->CountOfFiles += 1;
 
+Exit:
     CloseHandle(file);
 
-Exit:
     if (fileBuffer) {
         free(fileBuffer);
     }
