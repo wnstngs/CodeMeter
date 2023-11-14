@@ -1364,6 +1364,7 @@ RevGetLastKnownWin32Error(
     )
 {
     PWCHAR messageBuffer;
+    SIZE_T messageBufferSize;
     DWORD formatResult;
     const DWORD lastKnownError = GetLastError();
 
@@ -1385,9 +1386,11 @@ RevGetLastKnownWin32Error(
          */
 
         /* N.B. The maximum error code value is a 5-digit number (15999). */
-        messageBuffer = (PWCHAR) malloc((5 + 1) * sizeof(WCHAR));
+        messageBufferSize = (5 + 1) * sizeof(WCHAR);
+        messageBuffer = (PWCHAR) malloc(messageBufferSize);
         if (messageBuffer == NULL) {
-            RevLogError("Failed to allocate a message buffer.");
+            RevLogError("Failed to allocate a message buffer (%d bytes).",
+                        messageBufferSize);
             goto Exit;
         }
 
@@ -1423,7 +1426,8 @@ RevStringAppend(
      */
     result = (PWCHAR) malloc(resultStringLength * sizeof(WCHAR));
     if (result == NULL) {
-        RevLogError("Failed to allocate buffer with malloc.");
+        RevLogError("Failed to allocate string buffer (%d bytes).",
+                    resultStringLength * sizeof(WCHAR));
         goto Exit;
     }
 
@@ -1477,7 +1481,8 @@ RevStringPrepend(
      */
     result = (PWCHAR) malloc(resultStringLength * sizeof(WCHAR));
     if (result == NULL) {
-        RevLogError("Failed to allocate buffer with malloc.");
+        RevLogError("Failed to allocate string buffer (%d bytes).",
+                    resultStringLength * sizeof(WCHAR));
         goto Exit;
     }
 
@@ -1528,7 +1533,11 @@ RevInitialize(
      * Initialize the revision structure.
      */
 
-    Revision = (PREVISION) malloc(sizeof(REVISION));
+    Revision = (PREVISION)malloc(sizeof(REVISION));
+    if (Revision == NULL) {
+        RevLogError("Failed to allocate memory for the global revision structure (%d bytes).",
+                    sizeof(REVISION));
+    }
 
     RtlZeroMemory(Revision, sizeof(REVISION));
 
@@ -1572,9 +1581,10 @@ RevInitializeRevisionRecord(
 {
     PREVISION_RECORD revisionRecord;
 
-    revisionRecord = (PREVISION_RECORD) malloc(sizeof(REVISION_RECORD));
+    revisionRecord = (PREVISION_RECORD)malloc(sizeof(REVISION_RECORD));
     if (revisionRecord == NULL) {
-        RevLogError("Failed to allocate revisionRecord.");
+        RevLogError("Failed to allocate memory for the revision record (%d bytes).",
+                    sizeof(REVISION_RECORD));
         return NULL;
     }
 
@@ -1923,6 +1933,10 @@ RevReviseFile(
     for (i = 0; i < bytesRead; i++) {
         if (fileBuffer[i] == '\n') {
             ++lineCountTotal;
+
+            if (fileBuffer[i + 1] == '\n') {
+                ++lineCountBlank;
+            }
         }
     }
     if (fileSize.QuadPart > 0) {
