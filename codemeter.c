@@ -53,6 +53,11 @@ typedef struct REVISION_INIT_PARAMS {
      * Path to the revision root directory.
      */
     _Field_z_ PWCHAR RootDirectory;
+
+    /*
+     * Indicates whether verbose revision mode is active.
+     */
+    BOOL IsVerboseMode;
 } REVISION_INIT_PARAMS, *PREVISION_INIT_PARAMS;
 
 /**
@@ -162,11 +167,11 @@ const WCHAR WelcomeString[] =
     "--------------------------------------------------------\n\n";
 
 const WCHAR UsageString[] =
-    L"Instructions on how to use CodeMeter tools:\n\n"
+    L"[USAGE]\n"
     "In order to count the number of lines of CodeMeter code, you need "
     "the path to the root directory of the project you want to revise.\n"
     "The path should be passed as the first argument of the command line:\n\n\t"
-    "CodeMeter.exe \"C:\\\\MyProject\\\"\n\n";
+    "CodeMeter.exe \"C:\\\\MyProject\"\n\n";
 
 /**
  * @brief This array holds ANSI escape sequences for changing text color
@@ -1359,7 +1364,7 @@ FORCEINLINE
 VOID
 RevPrintEx(
     CONSOLE_FOREGROUND_COLOR Color,
-    const PWCHAR Format,
+    const wchar_t *Format,
     ...
 )
 {
@@ -1382,39 +1387,43 @@ RevPrintEx(
  * @param Format Supplies the format specifier.
  * @param ... Supplies additional parameters to be formatted and printed.
  */
-#define RevPrint(Format, ...)                                                   \
-    do {                                                                        \
-        RevPrintEx(Green, Format, __VA_ARGS__);                                 \
+#define RevPrint(Format, ...)                           \
+    do {                                                \
+        RevPrintEx(Green, Format, __VA_ARGS__);         \
     } while (0)
 
 /**
  * @brief This function outputs a red text error message to the standard error stream.
  * @param Message Supplies the error message.
  */
-#define RevLogError(Message, ...)                                               \
-    do {                                                                        \
-        fprintf(stderr,                                                         \
-                SupportAnsi ?                                                   \
-                "\033[0;31m[ERROR]\n└───> (in %s@%d): " Message "\033[0m\n" :   \
-                "[ERROR]\n└───> (in %s@%d): " Message "\n",                     \
-                __FUNCTION__,                                                   \
-                __LINE__,                                                       \
-                ##__VA_ARGS__);                                                 \
+#define RevLogError(Message, ...)                                                       \
+    do {                                                                                \
+        if (Revision && Revision->InitParams.IsVerboseMode) {                           \
+            fprintf(stderr,                                                             \
+                    SupportAnsi ?                                                       \
+                        "\033[0;31m[WARNING]\n└───> (in %s@%d): " Message "\033[0m\n" : \
+                        "[WARNING]\n└───> (in %s@%d): " Message "\n",                   \
+                        __FUNCTION__,                                                   \
+                        __LINE__,                                                       \
+                        ##__VA_ARGS__);                                                 \
+        }                                                                               \
     } while (0)
 
 /**
  * @brief This function outputs a yellow text warning message to the standard output stream.
  * @param Message Supplies the warning message.
  */
-#define RevLogWarning(Message, ...)                                             \
-    do {                                                                        \
-        fprintf(stdout,                                                         \
-                SupportAnsi ?                                                   \
-                "\033[0;33m[WARNING]\n└───> (in %s@%d): " Message "\033[0m\n" : \
-                "[WARNING]\n└───> (in %s@%d): " Message "\n",                   \
-                __FUNCTION__,                                                   \
-                __LINE__,                                                       \
-                ##__VA_ARGS__);                                                 \
+#define RevLogWarning(Message, ...)                                                     \
+    do {                                                                                \
+        if (Revision && Revision->InitParams.IsVerboseMode) {                           \
+            fprintf(stdout,                                                             \
+                    SupportAnsi ?                                                       \
+                        "\033[0;33m[WARNING]\n└───> (in %s@%d): " Message "\033[0m\n" : \
+                        "[WARNING]\n└───> (in %s@%d): " Message "\n",                   \
+                        __FUNCTION__,                                                   \
+                        __LINE__,                                                       \
+                        ##__VA_ARGS__);                                                 \
+        }                                                                               \
     } while (0)
 
 //
@@ -2149,6 +2158,7 @@ wmain(
     LARGE_INTEGER frequency;
     PWCHAR revisionPath = NULL;
     REVISION_INIT_PARAMS revisionInitParams;
+    LONG i;
 
     SupportAnsi = SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE),
                                  ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
@@ -2157,57 +2167,67 @@ wmain(
 
     /*
      * Process the command line arguments if any.
-     * TODO: "<= 1" instead of "<= -1" in Release. "-1" is used only for debugging.
      */
-    if (argc <= -1) {
+
+    if (argc <= 1) {
         /*
          * The command line arguments were not passed at all, so a folder selection dialog
          * should be opened where the user can select a directory to perform the revision.
          */
         RevPrint(UsageString);
-        status = -1;
         goto Exit;
     }
-    else {
 
-        /*
-         * Prepend L"\\?\" to the `argv[1]` if not prepended yet to avoid the obsolete
-         * MAX_PATH limitation.
-         * TODO: Use argv[1] instead of hard-coded revisionPath.
-         * "C:\Dev\CodeMeter\tests" is used only for debugging.
-         */
-        revisionPath = L"C:\\Dev\\CodeMeter\\tests2"/*argv[1]*/;
-        if (wcsncmp(revisionPath, MAX_PATH_FIX, wcslen(MAX_PATH_FIX)) != 0) {
+    /*
+     * Prepend L"\\?\" to the `argv[1]` if not prepended yet to avoid the obsolete
+     * MAX_PATH limitation.
+     */
+    revisionPath = argv[1];
+    if (wcsncmp(revisionPath, MAX_PATH_FIX, wcslen(MAX_PATH_FIX)) != 0) {
 
-            revisionPath = RevStringPrepend(revisionPath, MAX_PATH_FIX);
-            if (revisionPath == NULL) {
-                RevLogError("Failed to normalize the revision path (RevStringPrepend failed).");
-                status = -1;
-                goto Exit;
-            }
-        }
-
-        /*
-         * Now we are ready to set the root path of the revision directory.
-         */
-        revisionInitParams.RootDirectory = revisionPath;
-
-        if (argc == 2) {
-            /*
-             * Only one command line argument was provided, it is expected that this
-             * should be the path to the directory to perform the revision.
-             */
-        }
-        else {
-            /*
-             * It is expected that in the case of multiple command line arguments:
-             *  1) The first argument is the path to the root revision directory.
-             *  2) The remaining parameters are for optional revision configuration overrides.
-             *
-             * Process additional parameters:
-             */
+        revisionPath = RevStringPrepend(revisionPath, MAX_PATH_FIX);
+        if (revisionPath == NULL) {
+            RevLogError("Failed to normalize the revision path (RevStringPrepend failed).");
+            status = -1;
+            goto Exit;
         }
     }
+
+    /*
+     * Now we are ready to set the root path of the revision directory.
+     */
+    revisionInitParams.RootDirectory = revisionPath;
+    revisionInitParams.IsVerboseMode = FALSE;
+
+    if (argc > 2) {
+        /*
+         * It is expected that in the case of multiple command line arguments:
+         *  1) The first argument is the path to the root revision directory.
+         *  2) The remaining parameters are for optional revision configuration overrides.
+         *
+         * Process additional parameters:
+         */
+
+        for (i = 2; i < argc; ++i) {
+
+            /*
+             * -v: Sets the IsVerboseMode configuration flag to TRUE.
+             */
+            if (wcscmp(argv[i], L"-v") == 0) {
+                revisionInitParams.IsVerboseMode = TRUE;
+            }
+
+        }
+    }
+
+#if DEBUG
+    /*
+     * Always use verbose mode in debug builds.
+     */
+    if (revisionInitParams.IsVerboseMode == FALSE) {
+        revisionInitParams.IsVerboseMode = TRUE;
+    }
+#endif
 
     /*
      * Initialize the revision engine.
