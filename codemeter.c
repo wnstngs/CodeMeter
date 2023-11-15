@@ -134,6 +134,11 @@ typedef struct REVISION {
      * Number of files in the whole project.
      */
     ULONG CountOfFiles;
+
+    /*
+     * Number of ignored files during the revision.
+     */
+    ULONG CountOfIgnoredFiles;
 } REVISION, *PREVISION;
 
 /**
@@ -1878,6 +1883,10 @@ RevEnumerateRecursively(
                     RevLogError("RevReviseFile failed to revise the file \"%ls\".",
                                 subdirectoryPath);
                 }
+            } else {
+
+                /* Increment the total count of ignored files. */
+                Revision->CountOfIgnoredFiles += 1;
             }
         }
 
@@ -2008,7 +2017,7 @@ RevReviseFile(
         if (fileBuffer[i] == '\n') {
 
             /*
-             * Increments the total line count for every newline
+             * Increment the total line count for every newline
              * character encountered.
              */
             ++lineCountTotal;
@@ -2036,7 +2045,7 @@ RevReviseFile(
     }
     if (fileSize.QuadPart > 0) {
         /*
-         * Increments the total line count for the last line.
+         * Increment the total line count for the last line.
          */
         ++lineCountTotal;
 
@@ -2260,8 +2269,9 @@ wmain(
     RevOutputRevisionStatistics();
 
     RevPrintEx(Cyan,
-               L"Time: %.3fs\n",
-               (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart);
+               L"Time: %.3fs\tIgnored %d files\n",
+               (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart,
+               Revision->CountOfIgnoredFiles);
 
     system("pause");
 
