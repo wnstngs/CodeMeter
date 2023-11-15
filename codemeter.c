@@ -1402,6 +1402,21 @@ RevPrintEx(
                 ##__VA_ARGS__);                                                 \
     } while (0)
 
+/**
+ * @brief This function outputs a yellow text warning message to the standard output stream.
+ * @param Message Supplies the warning message.
+ */
+#define RevLogWarning(Message, ...)                                             \
+    do {                                                                        \
+        fprintf(stdout,                                                         \
+                SupportAnsi ?                                                   \
+                "\033[0;33m[WARNING]\n└───> (in %s@%d): " Message "\033[0m\n" : \
+                "[WARNING]\n└───> (in %s@%d): " Message "\n",                   \
+                __FUNCTION__,                                                   \
+                __LINE__,                                                       \
+                ##__VA_ARGS__);                                                 \
+    } while (0)
+
 //
 // ------------------------------------------------------------------ Functions
 //
@@ -1851,7 +1866,8 @@ RevEnumerateRecursively(
              */
             if (RevShouldReviseFile(findFileData.cFileName)) {
                 if (!RevReviseFile(subdirectoryPath)) {
-                    RevLogError("RevReviseFile failed to revise the file \"%ls\".", subdirectoryPath);
+                    RevLogError("RevReviseFile failed to revise the file \"%ls\".",
+                                subdirectoryPath);
                 }
             }
         }
@@ -1887,7 +1903,8 @@ RevShouldReviseFile(
      */
     fileExtension = wcsrchr(FilePath, L'.');
     if (fileExtension == NULL) {
-        RevLogError("Failed to determine the extension for the file \"%ls\".", FilePath);
+        RevLogWarning("Failed to determine the extension for the file \"%ls\".",
+                      FilePath);
         return FALSE;
     }
 
