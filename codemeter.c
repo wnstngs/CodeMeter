@@ -2220,7 +2220,7 @@ wmain(
         }
     }
 
-#if DEBUG
+#ifndef NDEBUG
     /*
      * Always use verbose mode in debug builds.
      */
