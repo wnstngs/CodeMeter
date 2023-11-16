@@ -173,11 +173,16 @@ const WCHAR WelcomeString[] =
     "--------------------------------------------------------\n\n";
 
 const WCHAR UsageString[] =
-    L"[USAGE]\n"
-    "In order to count the number of lines of CodeMeter code, you need "
-    "the path to the root directory of the project you want to revise.\n"
-    "The path should be passed as the first argument of the command line:\n\n\t"
-    "CodeMeter.exe \"C:\\\\MyProject\"\n\n";
+    L"DESCRIPTION:\n\n"
+    "\tIn order to count the number of lines of CodeMeter code, you need\n"
+    "\tthe path to the root directory of the project you want to revise.\n"
+    "\tThe path should be passed as the first argument of the command line:\n\n\t"
+    "CodeMeter.exe \"C:\\\\MyProject\"\n\n"
+    "OPTIONS:\n\n"
+    "\t-help, -h, -?\n"
+    "\tPrint a help message and exit.\n\n"
+    "\t-v\n"
+    "\tEnable verbose logging mode.\n\n";
 
 /**
  * @brief This array holds ANSI escape sequences for changing text color
@@ -2189,6 +2194,17 @@ wmain(
         /*
          * The command line arguments were not passed at all, so a folder selection dialog
          * should be opened where the user can select a directory to perform the revision.
+         */
+        RevPrint(UsageString);
+        goto Exit;
+    }
+
+    if (wcscmp(argv[1], L"-help") == 0 ||
+        wcscmp(argv[1], L"-h") == 0 ||
+        wcscmp(argv[1], L"-?") == 0) {
+        /*
+         * The only command line argument passed was '-help', '-h', or '-?', so show the
+         * instruction for use.
          */
         RevPrint(UsageString);
         goto Exit;
