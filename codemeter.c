@@ -28,8 +28,10 @@ Author:
 // ------------------------------------------------------------------- Includes
 //
 
-#include <stdio.h>
+#include <assert.h>
 #include <malloc.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #ifndef UNICODE
 #define UNICODE
@@ -37,7 +39,6 @@ Author:
 
 #define WIN32_LEAN_AND_MEAN
 
-#include <stdlib.h>
 #include <Windows.h>
 
 //
@@ -643,7 +644,7 @@ REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".mli",                L"OCaml"},
     {L".mly",                L"OCaml"},
     {L".mll",                L"OCaml"},
-    {L".m",                  L"MATLAB/Mathematica/Objective-C/MUMPS/Mercury"},
+    {L".m",                  L"MATLAB/Objective-C"},
     {L".mm",                 L"Objective-C++"},
     {L".msg",                L"Gencat NLS"},
     {L".nbp",                L"Mathematica"},
@@ -915,7 +916,7 @@ REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".svh",                L"Verilog-SystemVerilog"},
     {L".svg",                L"SVG"},
     {L".SVG",                L"SVG"},
-    {L".v",                  L"Verilog-SystemVerilog/Coq"},
+    {L".v",                  L"Verilog-SystemVerilog"},
     {L".td",                 L"TableGen"},
     {L".tcl",                L"Tcl/Tk"},
     {L".tcsh",               L"C Shell"},
@@ -963,7 +964,7 @@ REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".in3",                L"TNSDL"},
     {L".in4",                L"TNSDL"},
     {L".inf",                L"TNSDL"},
-    {L".tpd",                L"TITAN Project File Information"},
+    {L".tpd",                L"TITAN Project Descriptor"},
     {L".ts",                 L"TypeScript/Qt Linguist"},
     {L".mts",                L"TypeScript"},
     {L".tsx",                L"TypeScript"},
@@ -1400,6 +1401,8 @@ RevPrintEx(
 /**
  * @brief This function outputs a red text error message to the standard error stream.
  * @param Message Supplies the error message.
+ * @note This function respects the verbose mode setting from the global revision structure.
+ * The logging is conditioned on whether verbose mode is enabled.
  */
 #define RevLogError(Message, ...)                                                       \
     do {                                                                                \
@@ -1417,6 +1420,8 @@ RevPrintEx(
 /**
  * @brief This function outputs a yellow text warning message to the standard output stream.
  * @param Message Supplies the warning message.
+ * @note This function respects the verbose mode setting from the global revision structure.
+ * The logging is conditioned on whether verbose mode is enabled.
  */
 #define RevLogWarning(Message, ...)                                                     \
     do {                                                                                \
@@ -1724,6 +1729,8 @@ RevFindRevisionRecordForLanguageByExtension(
                     Extension);
         return NULL;
     }
+
+    assert(Revision != NULL);
 
     entry = Revision->RevisionRecordListHead.Flink;
 
@@ -2117,13 +2124,13 @@ RevOutputRevisionStatistics(
     /*
      * The table header.
      */
-    RevPrint(L"--------------------------------------------------------------------------\n");
-    RevPrint(L"%-18s%-10s%-22s%-25s\n",
+    RevPrint(L"----------------------------------------------------------------------------------\n");
+    RevPrint(L"%-25s%10s%22s%25s\n",
              L"File Type",
              L"Files",
              L"Blank Lines of Code",
              L"Total Lines of Code");
-    RevPrint(L"--------------------------------------------------------------------------\n");
+    RevPrint(L"----------------------------------------------------------------------------------\n");
 
     /*
      * Iterate through the revision record list and print statistics for each file type.
@@ -2134,7 +2141,7 @@ RevOutputRevisionStatistics(
 
         revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
         if (revisionRecord) {
-            RevPrint(L"%-18s%-10u%-22u%-25u\n",
+            RevPrint(L"%-25s%10u%22u%25u\n",
                      revisionRecord->ExtensionMapping.LanguageOrFileType,
                      revisionRecord->CountOfFiles,
                      revisionRecord->CountOfLinesBlank,
@@ -2145,13 +2152,13 @@ RevOutputRevisionStatistics(
     /*
      * The table footer with total statistics.
      */
-    RevPrint(L"--------------------------------------------------------------------------\n");
-    RevPrint(L"%-18s%-10u%-22u%-25u\n",
+    RevPrint(L"----------------------------------------------------------------------------------\n");
+    RevPrint(L"%-25s%10u%22u%25u\n",
              L"Total:",
              Revision->CountOfFiles,
              Revision->CountOfLinesBlank,
              Revision->CountOfLinesTotal);
-    RevPrint(L"--------------------------------------------------------------------------\n");
+    RevPrint(L"----------------------------------------------------------------------------------\n");
 }
 
 int
