@@ -1414,8 +1414,8 @@ RevPrintEx(
         if (Revision && Revision->InitParams.IsVerboseMode) {                           \
             fprintf(stderr,                                                             \
                     SupportAnsi ?                                                       \
-                        "\033[0;31m[WARNING]\n└───> (in %s@%d): " Message "\033[0m\n" : \
-                        "[WARNING]\n└───> (in %s@%d): " Message "\n",                   \
+                        "\033[0;31m[ERROR]\n└───> (in %s@%d): " Message "\033[0m\n" :   \
+                        "[ERROR]\n└───> (in %s@%d): " Message "\n",                     \
                         __FUNCTION__,                                                   \
                         __LINE__,                                                       \
                         ##__VA_ARGS__);                                                 \
