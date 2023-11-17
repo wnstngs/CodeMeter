@@ -2178,6 +2178,7 @@ wmain(
     LARGE_INTEGER endQpc;
     LARGE_INTEGER frequency;
     PWCHAR revisionPath = NULL;
+    SIZE_T revisionPathLength;
     REVISION_INIT_PARAMS revisionInitParams;
     LONG i;
 
@@ -2211,10 +2212,25 @@ wmain(
     }
 
     /*
+     * The first argument is the path to the root revision directory.
+     */
+    revisionPath = argv[1];
+
+    revisionPathLength = wcslen(revisionPath);
+
+    /*
+     * As part of improving input parameter validation, remove trailing '\' symbols
+     * replacing them with '\0' character.
+     */
+    while (revisionPathLength > 0 &&
+           revisionPath[revisionPathLength - 1] == L'\\') {
+        revisionPath[--revisionPathLength] = L'\0';
+    }
+
+    /*
      * Prepend L"\\?\" to the `argv[1]` if not prepended yet to avoid the obsolete
      * MAX_PATH limitation.
      */
-    revisionPath = argv[1];
     if (wcsncmp(revisionPath, MAX_PATH_FIX, wcslen(MAX_PATH_FIX)) != 0) {
 
         revisionPath = RevStringPrepend(revisionPath, MAX_PATH_FIX);
