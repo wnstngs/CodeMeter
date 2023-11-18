@@ -2133,8 +2133,8 @@ RevOutputRevisionStatistics(
     RevPrint(L"%-25s%10s%22s%25s\n",
              L"File Type",
              L"Files",
-             L"Blank Lines of Code",
-             L"Total Lines of Code");
+             L"Blank",
+             L"Total");
     RevPrint(L"----------------------------------------------------------------------------------\n");
 
     /*
