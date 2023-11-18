@@ -61,6 +61,11 @@ typedef struct REVISION_INIT_PARAMS {
     BOOL IsVerboseMode;
 } REVISION_INIT_PARAMS, *PREVISION_INIT_PARAMS;
 
+typedef enum _REVISION_RECORD_EXTENSION_TYPE {
+    SingleDot,
+    MultiDot
+} REVISION_RECORD_EXTENSION_TYPE;
+
 /**
  * @brief This structure stores the mapping of file extensions to programming languages.
  */
@@ -1289,12 +1294,12 @@ RevFindRevisionRecordForLanguageByExtension(
 /**
  * @brief This function checks if a file extension is in the extension table. File should
  * be revised only if it has valid (is in the table) extension.
- * @param FilePath Supplies the path to the file to be checked.
+ * @param FileName Supplies the name of the file to be checked.
  * @return TRUE if succeeded, FALSE if failed.
  */
 BOOL
 RevShouldReviseFile(
-    _In_z_ PWCHAR FilePath
+    _In_z_ PWCHAR FileName
     );
 
 /**
@@ -1917,13 +1922,13 @@ Exit:
 _Must_inspect_result_
 BOOL
 RevShouldReviseFile(
-    _In_z_ PWCHAR FilePath
+    _In_z_ PWCHAR FileName
     )
 {
     LONG i;
     PWCHAR fileExtension;
 
-    if (FilePath == NULL) {
+    if (FileName == NULL) {
         RevLogError("FilePath is NULL.");
         return FALSE;
     }
@@ -1931,10 +1936,10 @@ RevShouldReviseFile(
     /*
      * Find the file extension.
      */
-    fileExtension = wcsrchr(FilePath, L'.');
+    fileExtension = wcsrchr(FileName, L'.');
     if (fileExtension == NULL) {
         RevLogWarning("Failed to determine the extension for the file \"%ls\".",
-                      FilePath);
+                      FileName);
         return FALSE;
     }
 
