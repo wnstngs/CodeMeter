@@ -50,19 +50,30 @@ Author:
  * provided by the user at launch.
  */
 typedef struct REVISION_INIT_PARAMS {
-    /*
-     * Path to the revision root directory.
+    /**
+     * @brief Path to the revision root directory.
      */
     _Field_z_ PWCHAR RootDirectory;
 
-    /*
-     * Indicates whether verbose revision mode is active.
+    /**
+     * @brief Indicates whether verbose revision mode is active.
      */
     BOOL IsVerboseMode;
 } REVISION_INIT_PARAMS, *PREVISION_INIT_PARAMS;
 
+/**
+ * @brief This enumeration defines the types of file extensions (to be used in
+ * REVISION_RECORD_EXTENSION_MAPPING)
+ */
 typedef enum _REVISION_RECORD_EXTENSION_TYPE {
+    /**
+     * @brief File extension with a single dot, e.g. ".txt".
+     */
     SingleDot,
+
+    /**
+     * @brief File extension with multiple dots, e.g. ".CMakeLists.txt".
+     */
     MultiDot
 } REVISION_RECORD_EXTENSION_TYPE;
 
@@ -70,44 +81,50 @@ typedef enum _REVISION_RECORD_EXTENSION_TYPE {
  * @brief This structure stores the mapping of file extensions to programming languages.
  */
 typedef struct REVISION_RECORD_EXTENSION_MAPPING {
-    /*
-     * File extension.
+    /**
+     * @brief File extension.
      */
     _Field_z_ PWCHAR Extension;
 
-    /*
-     * Programming language or file type.
+    /**
+     * @brief Programming language or file type.
      */
     _Field_z_ PWCHAR LanguageOrFileType;
+
+    /**
+     * @brief Extension type which indicates whether the extension is a single-dot
+     * or multi-dot extension.
+     */
+    REVISION_RECORD_EXTENSION_TYPE ExtensionType;
 } REVISION_RECORD_EXTENSION_MAPPING, *PREVISION_RECORD_EXTENSION_MAPPING;
 
 /**
  * @brief This structure stores statistics for some specific file extension.
  */
 typedef struct REVISION_RECORD {
-    /*
-     * Linked list entry.
+    /**
+     * @brief Linked list entry.
      */
     LIST_ENTRY ListEntry;
 
-    /*
-     * Extension of the revision record file and recognized programming language/file
+    /**
+     * @brief Extension of the revision record file and recognized programming language/file
      * type based on extension.
      */
     REVISION_RECORD_EXTENSION_MAPPING ExtensionMapping;
 
-    /*
-     * Number of lines in the revision record.
+    /**
+     * @brief Number of lines in the revision record.
      */
     ULONGLONG CountOfLinesTotal;
 
-    /*
-     * Number of blank lines in the revision record.
+    /**
+     * @brief Number of blank lines in the revision record.
      */
     ULONGLONG CountOfLinesBlank;
 
-    /*
-     * Number of files in the revision record.
+    /**
+     * @brief Number of files in the revision record.
      */
     ULONG CountOfFiles;
 } REVISION_RECORD, *PREVISION_RECORD;
@@ -116,33 +133,33 @@ typedef struct REVISION_RECORD {
  * @brief This structure stores the statistics of the entire revision.
  */
 typedef struct REVISION {
-    /*
-     * Revision initialization parameters provided by the user.
+    /**
+     * @brief Revision initialization parameters provided by the user.
      */
     REVISION_INIT_PARAMS InitParams;
 
-    /*
-     * List of revision records.
+    /**
+     * @brief List of revision records.
      */
     LIST_ENTRY RevisionRecordListHead;
 
-    /*
-     * Number of lines in the whole project.
+    /**
+     * @brief Number of lines in the whole project.
      */
     ULONGLONG CountOfLinesTotal;
 
-    /*
-     * Number of blank lines in the whole project.
+    /**
+     * @brief Number of blank lines in the whole project.
      */
     ULONGLONG CountOfLinesBlank;
 
-    /*
-     * Number of files in the whole project.
+    /**
+     * @brief Number of files in the whole project.
      */
     ULONG CountOfFiles;
 
-    /*
-     * Number of ignored files during the revision.
+    /**
+     * @brief Number of ignored files during the revision.
      */
     ULONG CountOfIgnoredFiles;
 } REVISION, *PREVISION;
