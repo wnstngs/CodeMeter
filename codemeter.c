@@ -1241,7 +1241,7 @@ RevStringPrepend(
  */
 _Must_inspect_result_
 BOOL
-RevInitialize(
+RevInitializeRevision(
     _In_ PREVISION_INIT_PARAMS InitParams
     );
 
@@ -1253,7 +1253,7 @@ RevInitialize(
  */
 _Must_inspect_result_
 BOOL
-RevStart(
+RevStartRevision(
     VOID
     );
 
@@ -1619,7 +1619,7 @@ Exit:
 }
 
 BOOL
-RevInitialize(
+RevInitializeRevision(
     _In_ PREVISION_INIT_PARAMS InitParams
     )
 {
@@ -1667,7 +1667,7 @@ Exit:
 }
 
 BOOL
-RevStart(
+RevStartRevision(
     VOID
     )
 {
@@ -1804,7 +1804,7 @@ RevEnumerateRecursively(
     BOOL status = TRUE;
     HANDLE findFile = INVALID_HANDLE_VALUE;
     WIN32_FIND_DATAW findFileData;
-    PWCHAR subdirectoryPath = NULL;
+    PWCHAR subPath = NULL;
     PWCHAR searchPath = NULL;
 
     /*
@@ -1871,9 +1871,9 @@ RevEnumerateRecursively(
         /*
          * To construct a subpath, append the "\" to the RootDirectoryPath.
          */
-        subdirectoryPath = RevStringAppend(RootDirectoryPath,
+        subPath = RevStringAppend(RootDirectoryPath,
                                            L"\\");
-        if (subdirectoryPath == NULL) {
+        if (subPath == NULL) {
             RevLogError("Failed to normalize the revision subdirectory path "
                         "(RevStringAppend failed).");
             status = FALSE;
@@ -1885,11 +1885,11 @@ RevEnumerateRecursively(
          * N.B. The wildcard character (an asterisk) is not needed to be added as
          * it is done before calling FindFirstFileW.
          */
-        subdirectoryPath = RevStringAppend(subdirectoryPath,
-                                           findFileData.cFileName);
-        if (subdirectoryPath == NULL) {
+        subPath = RevStringAppend(subPath,
+                                  findFileData.cFileName);
+        if (subPath == NULL) {
             RevLogError("Failed to normalize the revision subdirectory path "
-                        "(RevStringAppend failed).");
+                "(RevStringAppend failed).");
             status = FALSE;
             goto Exit;
         }
@@ -1902,7 +1902,7 @@ RevEnumerateRecursively(
             /*
              * Recursively traverse a subdirectory.
              */
-            RevEnumerateRecursively(subdirectoryPath);
+            RevEnumerateRecursively(subPath);
         } else {
 
             /*
@@ -1913,9 +1913,9 @@ RevEnumerateRecursively(
              * but for file revision the full path (subdirectoryPath) is required.
              */
             if (RevShouldReviseFile(findFileData.cFileName)) {
-                if (!RevReviseFile(subdirectoryPath)) {
+                if (!RevReviseFile(subPath)) {
                     RevLogError("RevReviseFile failed to revise the file \"%ls\".",
-                                subdirectoryPath);
+                                subPath);
                 }
             } else {
 
@@ -1927,7 +1927,7 @@ RevEnumerateRecursively(
         /*
          * Free after RevStringAppend.
          */
-        free(subdirectoryPath);
+        free(subPath);
     } while (FindNextFileW(findFile, &findFileData) != 0);
 
     FindClose(findFile);
@@ -2302,7 +2302,7 @@ wmain(
     /*
      * Initialize the revision engine.
      */
-    status = RevInitialize(&revisionInitParams);
+    status = RevInitializeRevision(&revisionInitParams);
     if (status == FALSE) {
         RevLogError("Failed to initialize the revision engine.");
         goto Exit;
@@ -2317,7 +2317,7 @@ wmain(
         QueryPerformanceCounter(&startQpc);
     }
 
-    status = RevStart();
+    status = RevStartRevision();
     if (status == FALSE) {
         RevLogError("Failed to start the revision engine.");
         goto Exit;
