@@ -1521,7 +1521,9 @@ RevStringAppend(
     _In_z_ PWCHAR String2
     )
 {
-    SIZE_T string1Length, string2Length, resultStringLength;
+    SIZE_T string1Length;
+    SIZE_T string2Length;
+    SIZE_T resultStringLength;
     PWCHAR result;
 
     /*
@@ -1536,7 +1538,7 @@ RevStringAppend(
      */
     result = (PWCHAR) malloc(resultStringLength * sizeof(WCHAR));
     if (result == NULL) {
-        RevLogError("Failed to allocate string buffer (%d bytes).",
+        RevLogError("Failed to allocate string buffer (%llu bytes).",
                     resultStringLength * sizeof(WCHAR));
         goto Exit;
     }
@@ -1570,7 +1572,9 @@ RevStringPrepend(
     _In_z_ PWCHAR String2
     )
 {
-    SIZE_T string1Length, string2Length, resultStringLength;
+    SIZE_T string1Length;
+    SIZE_T string2Length;
+    SIZE_T resultStringLength;
     PWCHAR result;
 
     if (String1 == NULL || String2 == NULL) {
@@ -1591,7 +1595,7 @@ RevStringPrepend(
      */
     result = (PWCHAR) malloc(resultStringLength * sizeof(WCHAR));
     if (result == NULL) {
-        RevLogError("Failed to allocate string buffer (%d bytes).",
+        RevLogError("Failed to allocate string buffer (%llu bytes).",
                     resultStringLength * sizeof(WCHAR));
         goto Exit;
     }
@@ -1645,7 +1649,7 @@ RevInitializeRevision(
 
     Revision = (PREVISION)malloc(sizeof(REVISION));
     if (Revision == NULL) {
-        RevLogError("Failed to allocate memory for the global revision structure (%d bytes).",
+        RevLogError("Failed to allocate memory for the global revision structure (%llu bytes).",
                     sizeof(REVISION));
         status = FALSE;
         goto Exit;
@@ -1695,7 +1699,7 @@ RevInitializeRevisionRecord(
 
     revisionRecord = (PREVISION_RECORD)malloc(sizeof(REVISION_RECORD));
     if (revisionRecord == NULL) {
-        RevLogError("Failed to allocate memory for the revision record (%d bytes).",
+        RevLogError("Failed to allocate memory for the revision record (%llu bytes).",
                     sizeof(REVISION_RECORD));
         return NULL;
     }
@@ -1715,7 +1719,7 @@ RevMapExtensionToLanguage(
     _In_z_ PWCHAR Extension
     )
 {
-    LONG i = 0;
+    LONG index = 0;
 
     if (Extension == NULL) {
         RevLogError("Extension is NULL.");
@@ -1723,11 +1727,11 @@ RevMapExtensionToLanguage(
     }
 
     do {
-        if (wcscmp(Extension, ExtensionMappingTable[i].Extension) == 0) {
-            return ExtensionMappingTable[i].LanguageOrFileType;
+        if (wcscmp(Extension, ExtensionMappingTable[index].Extension) == 0) {
+            return ExtensionMappingTable[index].LanguageOrFileType;
         }
-        ++i;
-    } while (i < ARRAYSIZE(ExtensionMappingTable));
+        ++index;
+    } while (index < ARRAYSIZE(ExtensionMappingTable));
 
     return NULL;
 }
@@ -1844,6 +1848,7 @@ RevEnumerateRecursively(
      * Free after RevStringAppend.
      */
     free(searchPath);
+    searchPath = NULL;
 
     /*
      * Check if FindFirstFileW failed.
@@ -1872,7 +1877,7 @@ RevEnumerateRecursively(
          * To construct a subpath, append the "\" to the RootDirectoryPath.
          */
         subPath = RevStringAppend(RootDirectoryPath,
-                                           L"\\");
+                                  L"\\");
         if (subPath == NULL) {
             RevLogError("Failed to normalize the revision subdirectory path "
                         "(RevStringAppend failed).");
@@ -1889,7 +1894,7 @@ RevEnumerateRecursively(
                                   findFileData.cFileName);
         if (subPath == NULL) {
             RevLogError("Failed to normalize the revision subdirectory path "
-                "(RevStringAppend failed).");
+                        "(RevStringAppend failed).");
             status = FALSE;
             goto Exit;
         }
@@ -1928,11 +1933,22 @@ RevEnumerateRecursively(
          * Free after RevStringAppend.
          */
         free(subPath);
+        subPath = NULL;
     } while (FindNextFileW(findFile, &findFileData) != 0);
 
     FindClose(findFile);
 
 Exit:
+    /*
+     * Free after RevStringAppend.
+     */
+    if (RootDirectoryPath) {
+        free(RootDirectoryPath);
+    }
+    if (subPath) {
+        free(subPath);
+    }
+
     return status;
 }
 
@@ -1990,7 +2006,7 @@ RevReviseFile(
     BOOL isPreviousCharCarriageReturn;
     BOOL isNextCharCarriageReturn;
     BOOL isNextCharNewline;
-    LONG i;
+    LONG index;
 
     /*
      * Attempt to open the file.
@@ -2047,8 +2063,8 @@ RevReviseFile(
         goto Exit;
     }
 
-    for (i = 0; i < bytesRead; i++) {
-        if (fileBuffer[i] == '\n') {
+    for (index = 0; index < bytesRead; index++) {
+        if (fileBuffer[index] == '\n') {
 
             /*
              * Increment the total line count for every newline
@@ -2057,13 +2073,13 @@ RevReviseFile(
             ++lineCountTotal;
 
             /* Check if the previous character is a carriage return character. */
-            isPreviousCharCarriageReturn = (i > 0) && (fileBuffer[i - 1] == '\r');
+            isPreviousCharCarriageReturn = (index > 0) && (fileBuffer[index - 1] == '\r');
 
             /* Check if the next character is a carriage return character. */
-            isNextCharCarriageReturn = (i < bytesRead - 2) && (fileBuffer[i + 1] == '\r');
+            isNextCharCarriageReturn = (index < bytesRead - 2) && (fileBuffer[index + 1] == '\r');
 
             /* Check if the character after the next one is a newline character. */
-            isNextCharNewline = (i < bytesRead - 2) && (fileBuffer[i + 2] == '\n');
+            isNextCharNewline = (index < bytesRead - 2) && (fileBuffer[index + 2] == '\n');
 
             /*
              * Check is it a blank line?
@@ -2202,7 +2218,7 @@ wmain(
     PWCHAR revisionPath = NULL;
     SIZE_T revisionPathLength;
     REVISION_INIT_PARAMS revisionInitParams;
-    LONG i;
+    LONG index;
 
     SupportAnsi = SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE),
                                  ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
@@ -2278,12 +2294,12 @@ wmain(
          * Process additional parameters:
          */
 
-        for (i = 2; i < argc; ++i) {
+        for (index = 2; index < argc; ++index) {
 
             /*
              * -v: Sets the IsVerboseMode configuration flag to TRUE.
              */
-            if (wcscmp(argv[i], L"-v") == 0) {
+            if (wcscmp(argv[index], L"-v") == 0) {
                 revisionInitParams.IsVerboseMode = TRUE;
             }
 
