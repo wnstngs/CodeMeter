@@ -1999,6 +1999,7 @@ RevReviseFile(
     ULONGLONG lineCountTotal = 0;
     ULONGLONG lineCountBlank = 0;
     PCHAR fileBuffer = NULL;
+    SIZE_T fileBufferSize;
     PWCHAR fileExtension;
     HANDLE file;
     LARGE_INTEGER fileSize;
@@ -2039,8 +2040,13 @@ RevReviseFile(
 
     /*
      * Allocate buffer for the entire file.
+     * N.B. Currently, reading only ANSI files is supported, so the read buffer is
+     * allocated with a size that takes sizeof(CHAR) into account. It is assumed that
+     * most source code files do not use utf-16 encoding, but support for encoding detection
+     * should be added in the future.
      */
-    fileBuffer = (PCHAR)malloc(fileSize.QuadPart * sizeof(CHAR));
+    fileBufferSize = fileSize.QuadPart * sizeof(CHAR);
+    fileBuffer = (PCHAR)malloc(fileBufferSize);
     if (fileBuffer == NULL) {
         RevLogError("Failed to allocate a line buffer (%d bytes)",
                     fileSize.QuadPart * sizeof(CHAR));
@@ -2053,7 +2059,7 @@ RevReviseFile(
      */
     if (!ReadFile(file,
                   fileBuffer,
-                  fileSize.QuadPart * sizeof(CHAR),
+                  fileBufferSize,
                   &bytesRead,
                   NULL)) {
         RevLogError("Failed to read the file \"%ls\". The last known error: %ls.",
