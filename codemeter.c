@@ -1053,7 +1053,7 @@ REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".wsf",                L"XML"},
 //    {L".web.release.config", L"XML"},
 //    {L".web.debug.config",   L"XML"},
-    {L".web.config",         L"XML"},
+//    {L".web.config",         L"XML"},
     {L".wxml",               L"WXML"},
     {L".wxss",               L"WXSS"},
     {L".vxml",               L"XML"},
@@ -1263,6 +1263,7 @@ RevStartRevision(
  * @param LanguageOrFileType Supplies the language or file type of the revision record.
  * @return If the initialization is successful, returns a pointer to the new revision record; otherwise, NULL.
  */
+_Ret_maybenull_
 _Must_inspect_result_
 PREVISION_RECORD
 RevInitializeRevisionRecord(
@@ -1290,6 +1291,7 @@ RevEnumerateRecursively(
  * @return If a matching file extension is found in the mapping table, the function returns
  * the associated programming language as a string. If no match is found, the function returns NULL.
  */
+_Ret_maybenull_
 PWCHAR
 RevMapExtensionToLanguage(
     _In_z_ PWCHAR Extension
@@ -1302,6 +1304,7 @@ RevMapExtensionToLanguage(
  * @return If a matching REVISION_RECORD is found, returns a pointer to that record;
  * otherwise, returns NULL.
  */
+_Ret_maybenull_
 _Must_inspect_result_
 PREVISION_RECORD
 RevFindRevisionRecordForLanguageByExtension(
@@ -1689,6 +1692,7 @@ Exit:
     return status;
 }
 
+_Ret_maybenull_
 PREVISION_RECORD
 RevInitializeRevisionRecord(
     _In_z_ PWCHAR Extension,
@@ -1714,6 +1718,7 @@ RevInitializeRevisionRecord(
     return revisionRecord;
 }
 
+_Ret_maybenull_
 PWCHAR
 RevMapExtensionToLanguage(
     _In_z_ PWCHAR Extension
@@ -1736,6 +1741,7 @@ RevMapExtensionToLanguage(
     return NULL;
 }
 
+_Ret_maybenull_
 _Must_inspect_result_
 PREVISION_RECORD
 RevFindRevisionRecordForLanguageByExtension(
@@ -1929,11 +1935,6 @@ RevEnumerateRecursively(
             }
         }
 
-        /*
-         * Free after RevStringAppend.
-         */
-        free(subPath);
-        subPath = NULL;
     } while (FindNextFileW(findFile, &findFileData) != 0);
 
     FindClose(findFile);
@@ -1944,9 +1945,6 @@ Exit:
      */
     if (RootDirectoryPath) {
         free(RootDirectoryPath);
-    }
-    if (subPath) {
-        free(subPath);
     }
 
     return status;
@@ -1962,7 +1960,7 @@ RevShouldReviseFile(
     PWCHAR fileExtension;
 
     if (FileName == NULL) {
-        RevLogError("FilePath is NULL.");
+        RevLogError("FileName is NULL.");
         return FALSE;
     }
 
@@ -2108,7 +2106,8 @@ RevReviseFile(
         /*
          * Check if the last line is a blank line.
          */
-        if (fileBuffer[bytesRead - 2] == '\r' &&
+        if (bytesRead > 1 &&
+            fileBuffer[bytesRead - 2] == '\r' &&
             fileBuffer[bytesRead - 1] == '\n') {
             /* If so, increment the blank line count. */
             ++lineCountBlank;
@@ -2235,25 +2234,25 @@ wmain(
      * Process the command line arguments if any.
      */
 
-    if (argc <= 1) {
-        /*
-         * The command line arguments were not passed at all, so a folder selection dialog
-         * should be opened where the user can select a directory to perform the revision.
-         */
-        RevPrint(UsageString);
-        goto Exit;
-    }
+     if (argc <= 1) {
+         /*
+          * The command line arguments were not passed at all, so a folder selection dialog
+          * should be opened where the user can select a directory to perform the revision.
+          */
+         RevPrint(UsageString);
+         goto Exit;
+     }
 
-    if (wcscmp(argv[1], L"-help") == 0 ||
-        wcscmp(argv[1], L"-h") == 0 ||
-        wcscmp(argv[1], L"-?") == 0) {
-        /*
-         * The only command line argument passed was '-help', '-h', or '-?', so show the
-         * instruction for use.
-         */
-        RevPrint(UsageString);
-        goto Exit;
-    }
+     if (wcscmp(argv[1], L"-help") == 0 ||
+         wcscmp(argv[1], L"-h") == 0 ||
+         wcscmp(argv[1], L"-?") == 0) {
+         /*
+          * The only command line argument passed was '-help', '-h', or '-?', so show the
+          * instruction for use.
+          */
+         RevPrint(UsageString);
+         goto Exit;
+     }
 
     /*
      * The first argument is the path to the root revision directory.
