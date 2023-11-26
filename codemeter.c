@@ -1502,7 +1502,7 @@ RevGetLastKnownWin32Error(
         messageBufferSize = (5 + 1) * sizeof(WCHAR);
         messageBuffer = (PWCHAR) malloc(messageBufferSize);
         if (messageBuffer == NULL) {
-            RevLogError("Failed to allocate a message buffer (%d bytes).",
+            RevLogError("Failed to allocate a message buffer (%llu bytes).",
                         messageBufferSize);
             goto Exit;
         }
@@ -1514,6 +1514,11 @@ RevGetLastKnownWin32Error(
     }
 
 Exit:
+    if (messageBuffer) {
+        free(messageBuffer);
+        messageBuffer = NULL;
+    }
+
     return messageBuffer;
 }
 
