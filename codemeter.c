@@ -65,7 +65,7 @@ typedef struct REVISION_INIT_PARAMS {
  * @brief This enumeration defines the types of file extensions (to be used in
  * REVISION_RECORD_EXTENSION_MAPPING)
  */
-typedef enum _REVISION_RECORD_EXTENSION_TYPE {
+typedef enum REVISION_RECORD_EXTENSION_TYPE {
     /**
      * @brief File extension with a single dot, e.g. ".txt".
      */
@@ -167,7 +167,7 @@ typedef struct REVISION {
 /**
  * @brief This enumeration represents different console text colors.
  */
-typedef enum _CONSOLE_FOREGROUND_COLOR {
+typedef enum CONSOLE_FOREGROUND_COLOR {
     Red,
     Green,
     Yellow,
@@ -1196,7 +1196,8 @@ BOOL SupportAnsi;
  * and translates it into its corresponding error message.
  * @return A pointer to the error message string on success, or NULL on failure.
  */
-_Ret_maybenull_
+_Ret_maybenull_ 
+_Must_inspect_result_
 PWCHAR
 RevGetLastKnownWin32Error(
     VOID
@@ -1317,6 +1318,7 @@ RevFindRevisionRecordForLanguageByExtension(
  * @param FileName Supplies the name of the file to be checked.
  * @return TRUE if succeeded, FALSE if failed.
  */
+_Must_inspect_result_
 BOOL
 RevShouldReviseFile(
     _In_z_ PWCHAR FileName
@@ -1470,7 +1472,8 @@ RevPrintEx(
 // ------------------------------------------------------------------ Functions
 //
 
-_Ret_maybenull_
+_Ret_maybenull_ 
+_Must_inspect_result_
 PWCHAR
 RevGetLastKnownWin32Error(
     VOID
@@ -1507,22 +1510,23 @@ RevGetLastKnownWin32Error(
             goto Exit;
         }
 
-        swprintf_s(messageBuffer,
-                   (5 + 1),
-                   L"%lu",
-                   lastKnownError);
+        if (swprintf_s(messageBuffer,
+                       (5 + 1),
+                       L"%lu",
+                       lastKnownError) == -1) {
+            RevLogError("Failed to write formatted data to a string.");
+            messageBuffer = NULL;
+            goto Exit;
+        }
     }
 
 Exit:
-    if (messageBuffer) {
-        free(messageBuffer);
-        messageBuffer = NULL;
-    }
 
     return messageBuffer;
 }
 
-_Ret_maybenull_
+_Ret_maybenull_ 
+_Must_inspect_result_
 PWCHAR
 RevStringAppend(
     _In_z_ PWCHAR String1,
@@ -1574,6 +1578,7 @@ Exit:
 }
 
 _Ret_maybenull_
+_Must_inspect_result_ 
 PWCHAR
 RevStringPrepend(
     _In_z_ PWCHAR String1,
@@ -1821,6 +1826,7 @@ RevEnumerateRecursively(
     WIN32_FIND_DATAW findFileData;
     PWCHAR subPath = NULL;
     PWCHAR searchPath = NULL;
+    PWCHAR lastKnownErrorMessage = NULL;
 
     /*
      * Check validity of passed arguments.
@@ -1865,10 +1871,17 @@ RevEnumerateRecursively(
      * Check if FindFirstFileW failed.
      */
     if (findFile == INVALID_HANDLE_VALUE) {
-        RevLogError("Failed to find a file named \"%ls\" to start the enumeration. "
-                    "The last known error: %ls",
-                    RootDirectoryPath,
-                    RevGetLastKnownWin32Error());
+        lastKnownErrorMessage = RevGetLastKnownWin32Error();
+        if (lastKnownErrorMessage) {
+            RevLogError("Failed to find a file named \"%ls\" to start the enumeration. "
+                        "The last known error: %ls",
+                        RootDirectoryPath,
+                        lastKnownErrorMessage);
+            free(lastKnownErrorMessage);
+        } else {
+            RevLogError("Failed to find a file named \"%ls\" to start the enumeration.",
+                        RootDirectoryPath);
+        }
         status = FALSE;
         goto Exit;
     }
@@ -1998,11 +2011,12 @@ RevReviseFile(
     )
 {
     BOOL status = TRUE;
+    PWCHAR lastKnownErrorMessage = NULL;
     PREVISION_RECORD revisionRecord;
     ULONGLONG lineCountTotal = 0;
     ULONGLONG lineCountBlank = 0;
     PCHAR fileBuffer = NULL;
-    SIZE_T fileBufferSize;
+    DWORD fileBufferSize;
     PWCHAR fileExtension;
     HANDLE file;
     LARGE_INTEGER fileSize;
@@ -2010,7 +2024,7 @@ RevReviseFile(
     BOOL isPreviousCharCarriageReturn;
     BOOL isNextCharCarriageReturn;
     BOOL isNextCharNewline;
-    LONG index;
+    DWORD index;
 
     /*
      * Attempt to open the file.
@@ -2023,9 +2037,15 @@ RevReviseFile(
                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
                       NULL);
     if (file == INVALID_HANDLE_VALUE) {
-        RevLogError("Failed to open the file \"%ls\". The last known error: %ls.",
-                    FilePath,
-                    RevGetLastKnownWin32Error());
+        lastKnownErrorMessage = RevGetLastKnownWin32Error();
+        if (lastKnownErrorMessage) {
+            RevLogError("Failed to open the file \"%ls\". The last known error: %ls.",
+                        FilePath, 
+                        lastKnownErrorMessage);
+            free(lastKnownErrorMessage);
+        } else {
+            RevLogError("Failed to open the file \"%ls\".", FilePath);
+        }
         status = FALSE;
         goto Exit;
     }
@@ -2034,9 +2054,15 @@ RevReviseFile(
      * Retrieve the size of the file
      */
     if (!GetFileSizeEx(file, &fileSize)) {
-        RevLogError("Failed to retrieve the size of the file \"%ls\". The last known error: %ls.",
-                    FilePath,
-                    RevGetLastKnownWin32Error());
+        lastKnownErrorMessage = RevGetLastKnownWin32Error();
+        if (lastKnownErrorMessage) {
+            RevLogError("Failed to retrieve the size of the file \"%ls\". The last known error: %ls.",
+                        FilePath,
+                        lastKnownErrorMessage);
+            free(lastKnownErrorMessage);
+        } else {
+            RevLogError("Failed to retrieve the size of the file \"%ls\".", FilePath);
+        }
         status = FALSE;
         goto Exit;
     }
@@ -2051,7 +2077,7 @@ RevReviseFile(
     fileBufferSize = fileSize.QuadPart * sizeof(CHAR);
     fileBuffer = (PCHAR)malloc(fileBufferSize);
     if (fileBuffer == NULL) {
-        RevLogError("Failed to allocate a line buffer (%d bytes)",
+        RevLogError("Failed to allocate a line buffer (%llu bytes)",
                     fileSize.QuadPart * sizeof(CHAR));
         status = FALSE;
         goto Exit;
@@ -2065,9 +2091,15 @@ RevReviseFile(
                   fileBufferSize,
                   &bytesRead,
                   NULL)) {
-        RevLogError("Failed to read the file \"%ls\". The last known error: %ls.",
-                    FilePath,
-                    RevGetLastKnownWin32Error());
+        lastKnownErrorMessage = RevGetLastKnownWin32Error();
+        if (lastKnownErrorMessage) {
+            RevLogError("Failed to read the file \"%ls\". The last known error: %ls.",
+                        FilePath, 
+                        lastKnownErrorMessage);
+            free(lastKnownErrorMessage);
+        } else {
+            RevLogError("Failed to read the file \"%ls\".", FilePath);
+        }
         status = FALSE;
         goto Exit;
     }
@@ -2130,7 +2162,7 @@ RevReviseFile(
     }
 
     /*
-     * If there is a revision recourd for that language/file type in the revision
+     * If there is a revision record for that language/file type in the revision
      * record list, we will update it. If this file type has not been encountered,
      * we create a new node for it in the list.
      */

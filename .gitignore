@@ -127,3 +127,7 @@ Generated\ Files/
 *.svclog
 *.scc
 
+/.idea
+/cmake-build-debug
+/cmake-build-release
+/out/build
