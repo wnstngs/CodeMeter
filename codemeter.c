@@ -95,7 +95,7 @@ typedef struct REVISION_RECORD_EXTENSION_MAPPING {
      * @brief Extension type which indicates whether the extension is a single-dot
      * or multi-dot extension.
      */
-    REVISION_RECORD_EXTENSION_TYPE ExtensionType;
+    //REVISION_RECORD_EXTENSION_TYPE ExtensionType; TODO: Temporarily disabled. Re-evaluate the approach.
 } REVISION_RECORD_EXTENSION_MAPPING, *PREVISION_RECORD_EXTENSION_MAPPING;
 
 /**
@@ -1668,8 +1668,6 @@ RevInitializeRevision(
         goto Exit;
     }
 
-    RtlZeroMemory(Revision, sizeof(REVISION));
-
     /*
      * Initialize the list of revision records and other fields.
      */
@@ -1678,6 +1676,7 @@ RevInitializeRevision(
     Revision->CountOfLinesTotal = 0;
     Revision->CountOfLinesBlank = 0;
     Revision->CountOfFiles = 0;
+    Revision->CountOfIgnoredFiles = 0;
 
 Exit:
     return status;
@@ -1690,7 +1689,8 @@ RevStartRevision(
 {
     BOOL status = TRUE;
 
-    if (Revision == NULL || Revision->InitParams.RootDirectory == NULL) {
+    if (Revision == NULL || 
+        Revision->InitParams.RootDirectory == NULL) {
         RevLogError("The revision is not initialized/initialized correctly.");
         status = FALSE;
         goto Exit;
@@ -1787,7 +1787,8 @@ RevFindRevisionRecordForLanguageByExtension(
         /*
          * Check if there is a match.
          */
-        if (wcscmp(revisionRecord->ExtensionMapping.LanguageOrFileType, languageOrFileType) == 0) {
+        if (wcscmp(revisionRecord->ExtensionMapping.LanguageOrFileType, 
+                   languageOrFileType) == 0) {
             return revisionRecord;
         }
 
@@ -1810,7 +1811,8 @@ RevFindRevisionRecordForLanguageByExtension(
     /*
      * Add the new revision record to the global list of revision records.
      */
-    RevInsertTailList(&Revision->RevisionRecordListHead, &revisionRecord->ListEntry);
+    RevInsertTailList(&Revision->RevisionRecordListHead, 
+                      &revisionRecord->ListEntry);
 
     return revisionRecord;
 }
@@ -1906,7 +1908,7 @@ RevEnumerateRecursively(
             RevLogError("Failed to normalize the revision subdirectory path "
                         "(RevStringAppend failed).");
             status = FALSE;
-            goto Exit;
+            break;
         }
 
         /*
@@ -1920,7 +1922,7 @@ RevEnumerateRecursively(
             RevLogError("Failed to normalize the revision subdirectory path "
                         "(RevStringAppend failed).");
             status = FALSE;
-            goto Exit;
+            break;
         }
 
         /*
@@ -1931,7 +1933,11 @@ RevEnumerateRecursively(
             /*
              * Recursively traverse a subdirectory.
              */
-            RevEnumerateRecursively(subPath);
+            if (!RevEnumerateRecursively(subPath)) {
+                RevLogError("Recursive subdirectory traversal failed.");
+                status = FALSE;
+                break;
+            }
         } else {
 
             /*
@@ -2275,7 +2281,7 @@ wmain(
          /*
           * The command line arguments were not passed at all, so a folder selection dialog
           * should be opened where the user can select a directory to perform the revision.
-          */
+          #1#
          RevPrint(UsageString);
          goto Exit;
      }
@@ -2286,7 +2292,7 @@ wmain(
          /*
           * The only command line argument passed was '-help', '-h', or '-?', so show the
           * instruction for use.
-          */
+          #1#
          RevPrint(UsageString);
          goto Exit;
      }
@@ -2367,7 +2373,7 @@ wmain(
     }
 
     if (!QueryPerformanceFrequency(&frequency)) {
-        RevLogError("Failed to retrieves the frequency of the performance counter.");
+        RevLogError("Failed to retrieve the frequency of the performance counter.");
         measuringTime = FALSE;
     }
 
@@ -2388,11 +2394,18 @@ wmain(
     RevOutputRevisionStatistics();
 
     RevPrintEx(Cyan,
-               L"Time: %.3fs\tIgnored %d files\n",
-               (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart,
-               Revision->CountOfIgnoredFiles);
+               L"Time: %.3fs",
+               (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart);
 
+    if (Revision->CountOfIgnoredFiles > 0) {
+        RevPrintEx(Cyan,
+                   L"\tIgnored %d files\n",
+                   Revision->CountOfIgnoredFiles);
+    }
+
+#ifndef NDEBUG
     system("pause");
+#endif
 
 Exit:
     free(revisionPath);
