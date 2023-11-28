@@ -1515,6 +1515,9 @@ RevGetLastKnownWin32Error(
                        L"%lu",
                        lastKnownError) == -1) {
             RevLogError("Failed to write formatted data to a string.");
+            if (messageBuffer) {
+                free(messageBuffer);
+            }
             messageBuffer = NULL;
             goto Exit;
         }
@@ -1828,7 +1831,6 @@ RevEnumerateRecursively(
     WIN32_FIND_DATAW findFileData;
     PWCHAR subPath = NULL;
     PWCHAR searchPath = NULL;
-    PWCHAR lastKnownErrorMessage = NULL;
 
     /*
      * Check validity of passed arguments.
@@ -1873,17 +1875,10 @@ RevEnumerateRecursively(
      * Check if FindFirstFileW failed.
      */
     if (findFile == INVALID_HANDLE_VALUE) {
-        lastKnownErrorMessage = RevGetLastKnownWin32Error();
-        if (lastKnownErrorMessage) {
-            RevLogError("Failed to find a file named \"%ls\" to start the enumeration. "
-                        "The last known error: %ls",
-                        RootDirectoryPath,
-                        lastKnownErrorMessage);
-            free(lastKnownErrorMessage);
-        } else {
-            RevLogError("Failed to find a file named \"%ls\" to start the enumeration.",
-                        RootDirectoryPath);
-        }
+        RevLogError("Failed to find a file named \"%ls\" to start the enumeration. "
+                    "The last known error: %ls",
+                    RootDirectoryPath,
+                    RevGetLastKnownWin32Error());
         status = FALSE;
         goto Exit;
     }
@@ -2017,7 +2012,6 @@ RevReviseFile(
     )
 {
     BOOL status = TRUE;
-    PWCHAR lastKnownErrorMessage = NULL;
     PREVISION_RECORD revisionRecord;
     ULONGLONG lineCountTotal = 0;
     ULONGLONG lineCountBlank = 0;
@@ -2043,15 +2037,9 @@ RevReviseFile(
                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
                       NULL);
     if (file == INVALID_HANDLE_VALUE) {
-        lastKnownErrorMessage = RevGetLastKnownWin32Error();
-        if (lastKnownErrorMessage) {
-            RevLogError("Failed to open the file \"%ls\". The last known error: %ls.",
-                        FilePath, 
-                        lastKnownErrorMessage);
-            free(lastKnownErrorMessage);
-        } else {
-            RevLogError("Failed to open the file \"%ls\".", FilePath);
-        }
+        RevLogError("Failed to open the file \"%ls\". The last known error: %ls.",
+                    FilePath,
+                    RevGetLastKnownWin32Error());
         status = FALSE;
         goto Exit;
     }
@@ -2060,15 +2048,9 @@ RevReviseFile(
      * Retrieve the size of the file
      */
     if (!GetFileSizeEx(file, &fileSize)) {
-        lastKnownErrorMessage = RevGetLastKnownWin32Error();
-        if (lastKnownErrorMessage) {
-            RevLogError("Failed to retrieve the size of the file \"%ls\". The last known error: %ls.",
-                        FilePath,
-                        lastKnownErrorMessage);
-            free(lastKnownErrorMessage);
-        } else {
-            RevLogError("Failed to retrieve the size of the file \"%ls\".", FilePath);
-        }
+        RevLogError("Failed to retrieve the size of the file \"%ls\". The last known error: %ls.",
+                    FilePath,
+                    RevGetLastKnownWin32Error());
         status = FALSE;
         goto Exit;
     }
@@ -2097,15 +2079,9 @@ RevReviseFile(
                   fileBufferSize,
                   &bytesRead,
                   NULL)) {
-        lastKnownErrorMessage = RevGetLastKnownWin32Error();
-        if (lastKnownErrorMessage) {
-            RevLogError("Failed to read the file \"%ls\". The last known error: %ls.",
-                        FilePath, 
-                        lastKnownErrorMessage);
-            free(lastKnownErrorMessage);
-        } else {
-            RevLogError("Failed to read the file \"%ls\".", FilePath);
-        }
+        RevLogError("Failed to read the file \"%ls\". The last known error: %ls.",
+                    FilePath,
+                    RevGetLastKnownWin32Error());
         status = FALSE;
         goto Exit;
     }
@@ -2277,30 +2253,30 @@ wmain(
      * Process the command line arguments if any.
      */
 
-     if (argc <= 1) {
-         /*
-          * The command line arguments were not passed at all, so a folder selection dialog
-          * should be opened where the user can select a directory to perform the revision.
-          */
-         RevPrint(UsageString);
-         goto Exit;
-     }
-
-     if (wcscmp(argv[1], L"-help") == 0 ||
-         wcscmp(argv[1], L"-h") == 0 ||
-         wcscmp(argv[1], L"-?") == 0) {
-         /*
-          * The only command line argument passed was '-help', '-h', or '-?', so show the
-          * instruction for use.
-          */
-         RevPrint(UsageString);
-         goto Exit;
-     }
+     // if (argc <= 1) {
+     //     /*
+     //      * The command line arguments were not passed at all, so a folder selection dialog
+     //      * should be opened where the user can select a directory to perform the revision.
+     //      */
+     //     RevPrint(UsageString);
+     //     goto Exit;
+     // }
+     //
+     // if (wcscmp(argv[1], L"-help") == 0 ||
+     //     wcscmp(argv[1], L"-h") == 0 ||
+     //     wcscmp(argv[1], L"-?") == 0) {
+     //     /*
+     //      * The only command line argument passed was '-help', '-h', or '-?', so show the
+     //      * instruction for use.
+     //      */
+     //     RevPrint(UsageString);
+     //     goto Exit;
+     // }
 
     /*
      * The first argument is the path to the root revision directory.
      */
-    revisionPath = argv[1];
+    revisionPath = L"."/*argv[1]*/;
 
     revisionPathLength = wcslen(revisionPath);
 
