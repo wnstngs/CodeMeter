@@ -2281,7 +2281,7 @@ wmain(
          /*
           * The command line arguments were not passed at all, so a folder selection dialog
           * should be opened where the user can select a directory to perform the revision.
-          #1#
+          */
          RevPrint(UsageString);
          goto Exit;
      }
@@ -2292,7 +2292,7 @@ wmain(
          /*
           * The only command line argument passed was '-help', '-h', or '-?', so show the
           * instruction for use.
-          #1#
+          */
          RevPrint(UsageString);
          goto Exit;
      }
