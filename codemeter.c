@@ -2173,6 +2173,14 @@ RevReviseFile(
 Exit:
     CloseHandle(file);
 
+    /*
+     * Free after RevEnumerateRecursively.
+     */
+    if (FilePath) {
+        free(FilePath);
+        FilePath = NULL;
+    }
+
     if (fileBuffer) {
         free(fileBuffer);
     }
@@ -2274,9 +2282,18 @@ wmain(
      // }
 
     /*
-     * The first argument is the path to the root revision directory.
+     * The first argument is the path to the root revision directory:
      */
-    revisionPath = L"."/*argv[1]*/;
+
+    if (argv[1] == L".") {
+        /*
+         * If a dot was given, we need to revise the current directory. Let's find it. TODO.
+         */
+        assert(FALSE);
+
+    } else {
+        revisionPath = L"c:\\dev"; //argv[1];
+    }
 
     revisionPathLength = wcslen(revisionPath);
 
