@@ -1196,7 +1196,7 @@ BOOL SupportAnsi;
  * and translates it into its corresponding error message.
  * @return A pointer to the error message string on success, or NULL on failure.
  */
-_Ret_maybenull_ 
+_Ret_maybenull_
 _Must_inspect_result_
 PWCHAR
 RevGetLastKnownWin32Error(
@@ -1204,7 +1204,8 @@ RevGetLastKnownWin32Error(
     );
 
 /**
- * @brief This function appends one unicode string to another and returns the result.
+ * @brief This function appends one unicode string to another and returns the
+ * result.
  * @param String1 The first string (to which String2 will be appended).
  * @param String2 The second string (to be appended to String1).
  * @return A new string containing the concatenation of String1 and String2.
@@ -1220,7 +1221,8 @@ RevStringAppend(
     );
 
 /**
- * @brief This function prepends one unicode string to another and returns the result.
+ * @brief This function prepends one unicode string to another and returns the
+ * result.
  * @param String1 Supplies the first string (to be appended to).
  * @param String2 Supplies the second string (to be prepended).
  * @return A new string containing the concatenation of String1 and String2.
@@ -1262,7 +1264,8 @@ RevStartRevision(
  * @brief This function initializes a REVISION_RECORD structure.
  * @param Extension Supplies the file extension of the revision record.
  * @param LanguageOrFileType Supplies the language or file type of the revision record.
- * @return If the initialization is successful, returns a pointer to the new revision record; otherwise, NULL.
+ * @return If the initialization is successful, returns a pointer to the new
+ * revision record; otherwise, NULL.
  */
 _Ret_maybenull_
 _Must_inspect_result_
@@ -1275,8 +1278,8 @@ RevInitializeRevisionRecord(
 /**
  * @brief This function is designed to recursively traverse and enumerate files
  * and subdirectories within a given root directory path.
- * @param RootDirectoryPath Supplies the root directory path from which enumeration
- * should begin.
+ * @param RootDirectoryPath Supplies the root directory path from which
+ * enumeration should begin.
  * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
@@ -1286,11 +1289,12 @@ RevEnumerateRecursively(
     );
 
 /**
- * This function searches a table of file extension-to-language mappings to find the
- * programming language associated with the provided file extension.
+ * This function searches a table of file extension-to-language mappings to find
+ * the programming language associated with the provided file extension.
  * @param Extension Supplies the file extension.
- * @return If a matching file extension is found in the mapping table, the function returns
- * the associated programming language as a string. If no match is found, the function returns NULL.
+ * @return If a matching file extension is found in the mapping table, the
+ * function returns the associated programming language as a string. If no match
+ * is found, the function returns NULL.
  */
 _Ret_maybenull_
 PWCHAR
@@ -1299,11 +1303,12 @@ RevMapExtensionToLanguage(
     );
 
 /**
- * @brief This function checks if a REVISION_RECORD for a language/file type with a given
- * extension exists in the global revision's list of revision records.
+ * @brief This function checks if a REVISION_RECORD for a language/file type
+ * with a given extension exists in the global revision's list of revision
+ * records.
  * @param Extension Supplies the file extension to search for.
- * @return If a matching REVISION_RECORD is found, returns a pointer to that record;
- * otherwise, returns NULL.
+ * @return If a matching REVISION_RECORD is found, returns a pointer to that
+ * record; otherwise, returns NULL.
  */
 _Ret_maybenull_
 _Must_inspect_result_
@@ -1313,8 +1318,8 @@ RevFindRevisionRecordForLanguageByExtension(
     );
 
 /**
- * @brief This function checks if a file extension is in the extension table. File should
- * be revised only if it has valid (is in the table) extension.
+ * @brief This function checks if a file extension is in the extension table.
+ * File should be revised only if it has valid (is in the table) extension.
  * @param FileName Supplies the name of the file to be checked.
  * @return TRUE if succeeded, FALSE if failed.
  */
@@ -1346,7 +1351,8 @@ RevOutputRevisionStatistics(
 /**
  * @brief This function initializes a LIST_ENTRY structure that represents
  * the head of a doubly linked list.
- * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the head of the list.
+ * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the head
+ * of the list.
  */
 FORCEINLINE
 VOID
@@ -1359,8 +1365,10 @@ RevInitializeListHead(
 
 /**
  * @brief This function checks whether a LIST_ENTRY is empty.
- * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the head of the list.
- * @return TRUE if there are currently no entries in the list and FALSE otherwise.
+ * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the head
+ * of the list.
+ * @return TRUE if there are currently no entries in the list and FALSE
+ * otherwise.
  */
 FORCEINLINE
 BOOL
@@ -1373,8 +1381,10 @@ RevIsListEmpty(
 
 /**
  * @brief This function inserts an entry at the tail of a list.
- * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the head of the list.
- * @param Entry Supplies a pointer to a LIST_ENTRY that represents the entry to be inserted.
+ * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the head
+ * of the list.
+ * @param Entry Supplies a pointer to a LIST_ENTRY that represents the entry to
+ * be inserted.
  */
 FORCEINLINE
 VOID
@@ -1398,7 +1408,6 @@ RevInsertTailList(
  * @param Format Supplies the format specifier.
  * @param ... Supplies additional parameters to be formatted and printed.
  */
-FORCEINLINE
 VOID
 RevPrintEx(
     CONSOLE_FOREGROUND_COLOR Color,
@@ -1472,7 +1481,7 @@ RevPrintEx(
 // ------------------------------------------------------------------ Functions
 //
 
-_Ret_maybenull_ 
+_Ret_maybenull_
 _Must_inspect_result_
 PWCHAR
 RevGetLastKnownWin32Error(
@@ -1528,7 +1537,7 @@ Exit:
     return messageBuffer;
 }
 
-_Ret_maybenull_ 
+_Ret_maybenull_
 _Must_inspect_result_
 PWCHAR
 RevStringAppend(
@@ -1581,7 +1590,7 @@ Exit:
 }
 
 _Ret_maybenull_
-_Must_inspect_result_ 
+_Must_inspect_result_
 PWCHAR
 RevStringPrepend(
     _In_z_ PWCHAR String1,
@@ -1692,7 +1701,7 @@ RevStartRevision(
 {
     BOOL status = TRUE;
 
-    if (Revision == NULL || 
+    if (Revision == NULL ||
         Revision->InitParams.RootDirectory == NULL) {
         RevLogError("The revision is not initialized/initialized correctly.");
         status = FALSE;
@@ -1790,7 +1799,7 @@ RevFindRevisionRecordForLanguageByExtension(
         /*
          * Check if there is a match.
          */
-        if (wcscmp(revisionRecord->ExtensionMapping.LanguageOrFileType, 
+        if (wcscmp(revisionRecord->ExtensionMapping.LanguageOrFileType,
                    languageOrFileType) == 0) {
             return revisionRecord;
         }
@@ -1814,7 +1823,7 @@ RevFindRevisionRecordForLanguageByExtension(
     /*
      * Add the new revision record to the global list of revision records.
      */
-    RevInsertTailList(&Revision->RevisionRecordListHead, 
+    RevInsertTailList(&Revision->RevisionRecordListHead,
                       &revisionRecord->ListEntry);
 
     return revisionRecord;
@@ -2062,7 +2071,7 @@ RevReviseFile(
      * most source code files do not use utf-16 encoding, but support for encoding detection
      * should be added in the future.
      */
-    fileBufferSize = fileSize.QuadPart * sizeof(CHAR);
+    fileBufferSize = (DWORD)fileSize.QuadPart * sizeof(CHAR);
     fileBuffer = (PCHAR)malloc(fileBufferSize);
     if (fileBuffer == NULL) {
         RevLogError("Failed to allocate a line buffer (%llu bytes)",
@@ -2244,9 +2253,9 @@ wmain(
 {
     int status = 0;
     BOOL measuringTime = TRUE;
-    LARGE_INTEGER startQpc;
-    LARGE_INTEGER endQpc;
-    LARGE_INTEGER frequency;
+    LARGE_INTEGER startQpc = {0};
+    LARGE_INTEGER endQpc = {0};
+    LARGE_INTEGER frequency = {0};
     PWCHAR revisionPath = NULL;
     SIZE_T revisionPathLength;
     REVISION_INIT_PARAMS revisionInitParams;
@@ -2285,11 +2294,13 @@ wmain(
      * The first argument is the path to the root revision directory:
      */
 
-    if (argv[1] == L".") {
+    if (wcscmp(argv[1], L".") == 0) {
         /*
          * If a dot was given, we need to revise the current directory. Let's find it. TODO.
          */
         assert(FALSE);
+
+        revisionPath = L"c:\\dev"; //argv[1];
 
     } else {
         revisionPath = L"c:\\dev"; //argv[1];
@@ -2330,7 +2341,8 @@ wmain(
         /*
          * It is expected that in the case of multiple command line arguments:
          *  1) The first argument is the path to the root revision directory.
-         *  2) The remaining parameters are for optional revision configuration overrides.
+         *  2) The remaining parameters are for optional revision configuration
+         *     overrides.
          *
          * Process additional parameters:
          */
@@ -2386,9 +2398,11 @@ wmain(
 
     RevOutputRevisionStatistics();
 
-    RevPrintEx(Cyan,
-               L"Time: %.3fs",
-               (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart);
+    if (measuringTime) {
+        RevPrintEx(Cyan,
+                   L"Time: %.3fs",
+                   (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart);
+    }
 
     if (Revision->CountOfIgnoredFiles > 0) {
         RevPrintEx(Cyan,
