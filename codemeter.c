@@ -1,6 +1,6 @@
 /*++
 
-Copyright (c) 2023  Glebs. All rights reserved.
+Copyright (c) 2023  wnstngs. All rights reserved.
 
 Module Name:
 
@@ -10,17 +10,13 @@ Abstract:
 
     This module implements CodeMeter, a program for counting lines of code.
 
-    Further, the term "revision" is mentioned repeatedly. It is understood to mean
-    the whole process: from scanning files and counting them to counting lines of code.
-                          ┌─────────────────┐
-                e.g. path │                 │ returns
-    Init params ─────────►│    Revision     ├─────────► Statistics
-                          │                 │
-                          └─────────────────┘
-    
-Author:
+    Throughout the code, the term "revision" refers to the entire process, which
+    includes scanning files, counting the number of files, and calculating the
+    total lines of code.
 
-    Glebs Oct-2023
+                     path ┌─────────────────┐ returns
+    Init params ─────────►│    Revision     ├─────────► Statistics
+                          └─────────────────┘
 
 --*/
 
@@ -46,8 +42,8 @@ Author:
 //
 
 /**
- * @brief This structure stores the initialization parameters of the revision
- * provided by the user at launch.
+ * @brief This structure stores the initialization parameters of the
+ * revision provided by the user at launch.
  */
 typedef struct REVISION_INIT_PARAMS {
     /**
@@ -62,8 +58,8 @@ typedef struct REVISION_INIT_PARAMS {
 } REVISION_INIT_PARAMS, *PREVISION_INIT_PARAMS;
 
 /**
- * @brief This enumeration defines the types of file extensions (to be used in
- * REVISION_RECORD_EXTENSION_MAPPING)
+ * @brief This enumeration defines the types of file extensions
+ * (to be used in REVISION_RECORD_EXTENSION_MAPPING)
  */
 typedef enum REVISION_RECORD_EXTENSION_TYPE {
     /**
@@ -78,7 +74,8 @@ typedef enum REVISION_RECORD_EXTENSION_TYPE {
 } REVISION_RECORD_EXTENSION_TYPE;
 
 /**
- * @brief This structure stores the mapping of file extensions to programming languages.
+ * @brief This structure stores the mapping of file extensions to
+ * programming languages.
  */
 typedef struct REVISION_RECORD_EXTENSION_MAPPING {
     /**
@@ -92,14 +89,16 @@ typedef struct REVISION_RECORD_EXTENSION_MAPPING {
     _Field_z_ PWCHAR LanguageOrFileType;
 
     /**
-     * @brief Extension type which indicates whether the extension is a single-dot
-     * or multi-dot extension.
+     * @brief Extension type which indicates whether the extension is a
+     * single-dot or multi-dot extension.
      */
-    //REVISION_RECORD_EXTENSION_TYPE ExtensionType; TODO: Temporarily disabled. Re-evaluate the approach.
+    /* TODO: Temporarily disabled. Re-evaluate the approach.
+    REVISION_RECORD_EXTENSION_TYPE ExtensionType; */
 } REVISION_RECORD_EXTENSION_MAPPING, *PREVISION_RECORD_EXTENSION_MAPPING;
 
 /**
- * @brief This structure stores statistics for some specific file extension.
+ * @brief This structure stores statistics for some specific file
+ * extension.
  */
 typedef struct REVISION_RECORD {
     /**
@@ -108,8 +107,8 @@ typedef struct REVISION_RECORD {
     LIST_ENTRY ListEntry;
 
     /**
-     * @brief Extension of the revision record file and recognized programming language/file
-     * type based on extension.
+     * @brief Extension of the revision record file and recognized
+     * programming language/file type based on extension.
      */
     REVISION_RECORD_EXTENSION_MAPPING ExtensionMapping;
 
@@ -181,12 +180,14 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
 //
 
 /**
- * @brief The string to be prepended to a path to avoid the MAX_PATH limitation.
+ * @brief The string to be prepended to a path to avoid the MAX_PATH
+ * limitation.
  */
 #define MAX_PATH_FIX    L"\\\\?\\"
 
 /**
- * @brief The string to be appended to a path to indicate all of its contents.
+ * @brief The string to be appended to a path to indicate all of its
+ * contents.
  */
 #define ASTERISK        L"\\*"
 
@@ -209,7 +210,9 @@ const WCHAR UsageString[] =
 /**
  * @brief This array holds ANSI escape sequences for changing text color
  * in the console for each corresponding CONSOLE_FOREGROUND_COLOR.
- * @note The order must be the same as in the enumeration CONSOLE_FOREGROUND_COLOR.
+ *
+ * @note The order must be the same as in the enumeration
+ * CONSOLE_FOREGROUND_COLOR.
  */
 const PWCHAR ConsoleForegroundColors[] = {
     /* Red */
@@ -232,10 +235,12 @@ const PWCHAR ConsoleForegroundColors[] = {
 };
 
 /**
- * @brief Mapping of file extensions that can be recognized to human-readable descriptions of file types.
+ * @brief Mapping of file extensions that can be recognized to
+ * human-readable descriptions of file types.
  *
- * TODO: Multi-dot extensions are commented out, we need to add support for them.
-         The current algorithm counts everything after the last dot as an extension.
+ * TODO: Multi-dot extensions are commented out, we need to add support
+ *       for them. The current algorithm counts everything after the last
+ *       dot as an extension.
  */
 REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".abap",               L"ABAP"},
@@ -1178,7 +1183,8 @@ REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
 };
 
 /**
- * @brief The global revision state used throughout the entire program run-time.
+ * @brief The global revision state used throughout the entire program
+ * run-time.
  */
 PREVISION Revision = NULL;
 
@@ -1192,9 +1198,11 @@ BOOL SupportAnsi;
 //
 
 /**
- * @brief This function retrieves the calling thread's last-error code value
- * and translates it into its corresponding error message.
- * @return A pointer to the error message string on success, or NULL on failure.
+ * @brief This function retrieves the calling thread's last-error code
+ * value and translates it into its corresponding error message.
+ *
+ * @return A pointer to the error message string on success,
+ * or NULL on failure.
  */
 _Ret_maybenull_
 _Must_inspect_result_
@@ -1204,13 +1212,17 @@ RevGetLastKnownWin32Error(
     );
 
 /**
- * @brief This function appends one unicode string to another and returns the
- * result.
+ * @brief This function appends one unicode string to another and returns
+ * the result.
+ *
  * @param String1 The first string (to which String2 will be appended).
+ *
  * @param String2 The second string (to be appended to String1).
- * @return A new string containing the concatenation of String1 and String2.
- *         NULL if the function failed.
- *         N.B. The caller is responsible for freeing the memory.
+ *
+ * @return A new string containing the concatenation of String1 and
+ * String2. NULL if the function failed.
+ *
+ * @remarks The caller is responsible for freeing the memory.
  */
 _Ret_maybenull_
 _Must_inspect_result_
@@ -1221,13 +1233,17 @@ RevStringAppend(
     );
 
 /**
- * @brief This function prepends one unicode string to another and returns the
- * result.
+ * @brief This function prepends one unicode string to another and
+ * returns the result.
+ *
  * @param String1 Supplies the first string (to be appended to).
+ *
  * @param String2 Supplies the second string (to be prepended).
- * @return A new string containing the concatenation of String1 and String2.
- *         NULL if the function failed.
- *         N.B. The caller is responsible for freeing the memory.
+ *
+ * @return A new string containing the concatenation of String1 and
+ * String2. NULL if the function failed.
+ *
+ * @remarks N.B. The caller is responsible for freeing the memory.
  */
 _Ret_maybenull_
 _Must_inspect_result_
@@ -1238,8 +1254,11 @@ RevStringPrepend(
     );
 
 /**
- * @brief This function is responsible for initializing the revision system.
+ * @brief This function is responsible for initializing the revision
+ * system.
+ *
  * @param InitParams Supplies the revision initialization parameters.
+ *
  * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
@@ -1249,9 +1268,10 @@ RevInitializeRevision(
     );
 
 /**
- * @brief This function is responsible for starting the revision system. It
- * ensures that the system has been initialized correctly before proceeding
- * with its operations.
+ * @brief This function is responsible for starting the revision system.
+ * It ensures that the system has been initialized correctly before
+ * proceeding with its operations.
+ *
  * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
@@ -1262,10 +1282,14 @@ RevStartRevision(
 
 /**
  * @brief This function initializes a REVISION_RECORD structure.
+ *
  * @param Extension Supplies the file extension of the revision record.
- * @param LanguageOrFileType Supplies the language or file type of the revision record.
- * @return If the initialization is successful, returns a pointer to the new
- * revision record; otherwise, NULL.
+ *
+ * @param LanguageOrFileType Supplies the language or file type of the
+ * revision record.
+ *
+ * @return If the initialization is successful, returns a pointer to the
+ * new revision record; otherwise, NULL.
  */
 _Ret_maybenull_
 _Must_inspect_result_
@@ -1276,10 +1300,12 @@ RevInitializeRevisionRecord(
     );
 
 /**
- * @brief This function is designed to recursively traverse and enumerate files
- * and subdirectories within a given root directory path.
+ * @brief This function is designed to recursively traverse and enumerate
+ * files and subdirectories within a given root directory path.
+ *
  * @param RootDirectoryPath Supplies the root directory path from which
  * enumeration should begin.
+ *
  * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
@@ -1289,12 +1315,15 @@ RevEnumerateRecursively(
     );
 
 /**
- * This function searches a table of file extension-to-language mappings to find
- * the programming language associated with the provided file extension.
+ * This function searches a table of file extension-to-language mappings
+ * to find the programming language associated with the provided file
+ * extension.
+ *
  * @param Extension Supplies the file extension.
- * @return If a matching file extension is found in the mapping table, the
- * function returns the associated programming language as a string. If no match
- * is found, the function returns NULL.
+ *
+ * @return If a matching file extension is found in the mapping table,
+ * the function returns the associated programming language as a string.
+ * If no match is found, the function returns NULL.
  */
 _Ret_maybenull_
 PWCHAR
@@ -1303,12 +1332,14 @@ RevMapExtensionToLanguage(
     );
 
 /**
- * @brief This function checks if a REVISION_RECORD for a language/file type
- * with a given extension exists in the global revision's list of revision
- * records.
+ * @brief This function checks if a REVISION_RECORD for a language/file
+ * type with a given extension exists in the global revision's list of
+ * revision records.
+ *
  * @param Extension Supplies the file extension to search for.
- * @return If a matching REVISION_RECORD is found, returns a pointer to that
- * record; otherwise, returns NULL.
+ *
+ * @return If a matching REVISION_RECORD is found, returns a pointer to
+ * that record; otherwise, returns NULL.
  */
 _Ret_maybenull_
 _Must_inspect_result_
@@ -1318,9 +1349,12 @@ RevFindRevisionRecordForLanguageByExtension(
     );
 
 /**
- * @brief This function checks if a file extension is in the extension table.
- * File should be revised only if it has valid (is in the table) extension.
+ * @brief This function checks if a file extension is in the extension
+ * table. File should be revised only if it has valid (is in the table)
+ * extension.
+ *
  * @param FileName Supplies the name of the file to be checked.
+ *
  * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
@@ -1349,10 +1383,11 @@ RevOutputRevisionStatistics(
     );
 
 /**
- * @brief This function initializes a LIST_ENTRY structure that represents
- * the head of a doubly linked list.
- * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the head
- * of the list.
+ * @brief This function initializes a LIST_ENTRY structure that
+ * represents the head of a doubly linked list.
+ *
+ * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the
+ * head of the list.
  */
 FORCEINLINE
 VOID
@@ -1365,8 +1400,10 @@ RevInitializeListHead(
 
 /**
  * @brief This function checks whether a LIST_ENTRY is empty.
- * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the head
- * of the list.
+ *
+ * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the
+ * head of the list.
+ *
  * @return TRUE if there are currently no entries in the list and FALSE
  * otherwise.
  */
@@ -1381,10 +1418,12 @@ RevIsListEmpty(
 
 /**
  * @brief This function inserts an entry at the tail of a list.
- * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the head
- * of the list.
- * @param Entry Supplies a pointer to a LIST_ENTRY that represents the entry to
- * be inserted.
+ *
+ * @param ListHead Supplies a pointer to a LIST_ENTRY that represents the
+ * head of the list.
+ *
+ * @param Entry Supplies a pointer to a LIST_ENTRY that represents the
+ * entry to be inserted.
  */
 FORCEINLINE
 VOID
@@ -1404,8 +1443,11 @@ RevInsertTailList(
 
 /**
  * @brief This function prints a formatted string in the specified color.
+ *
  * @param Color Supplies the text foreground color.
+ *
  * @param Format Supplies the format specifier.
+ *
  * @param ... Supplies additional parameters to be formatted and printed.
  */
 VOID
@@ -1430,8 +1472,11 @@ RevPrintEx(
 }
 
 /**
- * @brief This function prints a formatted string in [default] green color.
+ * @brief This function prints a formatted string in [default] green
+ * color.
+ *
  * @param Format Supplies the format specifier.
+ *
  * @param ... Supplies additional parameters to be formatted and printed.
  */
 #define RevPrint(Format, ...)                           \
@@ -1440,10 +1485,14 @@ RevPrintEx(
     } while (0)
 
 /**
- * @brief This function outputs a red text error message to the standard error stream.
+ * @brief This function outputs a red text error message to the standard
+ * error stream.
+ *
  * @param Message Supplies the error message.
- * @note This function respects the verbose mode setting from the global revision structure.
- * The logging is conditioned on whether verbose mode is enabled.
+ *
+ * @note This function respects the verbose mode setting from the global
+ * revision structure. The logging is conditioned on whether verbose mode
+ * is enabled.
  */
 #define RevLogError(Message, ...)                                                       \
     do {                                                                                \
@@ -1459,10 +1508,14 @@ RevPrintEx(
     } while (0)
 
 /**
- * @brief This function outputs a yellow text warning message to the standard output stream.
+ * @brief This function outputs a yellow text warning message to the
+ * standard output stream.
+ *
  * @param Message Supplies the warning message.
- * @note This function respects the verbose mode setting from the global revision structure.
- * The logging is conditioned on whether verbose mode is enabled.
+ *
+ * @note This function respects the verbose mode setting from the global
+ * revision structure. The logging is conditioned on whether verbose mode
+ * is enabled.
  */
 #define RevLogWarning(Message, ...)                                                     \
     do {                                                                                \
@@ -1496,11 +1549,12 @@ RevGetLastKnownWin32Error(
     /*
      * Attempt to format the error code into a human-readable string.
      */
-    formatResult = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+    formatResult = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+                                  FORMAT_MESSAGE_FROM_SYSTEM,
                                   NULL,
                                   lastKnownError,
                                   0,
-                                  (LPWSTR) &messageBuffer,
+                                  (LPWSTR)&messageBuffer,
                                   0,
                                   NULL);
 
@@ -1674,7 +1728,8 @@ RevInitializeRevision(
 
     Revision = (PREVISION)malloc(sizeof(REVISION));
     if (Revision == NULL) {
-        RevLogError("Failed to allocate memory for the global revision structure (%llu bytes).",
+        RevLogError("Failed to allocate memory for the global revision "
+                    "structure (%llu bytes).",
                     sizeof(REVISION));
         status = FALSE;
         goto Exit;
@@ -1725,7 +1780,8 @@ RevInitializeRevisionRecord(
 
     revisionRecord = (PREVISION_RECORD)malloc(sizeof(REVISION_RECORD));
     if (revisionRecord == NULL) {
-        RevLogError("Failed to allocate memory for the revision record (%llu bytes).",
+        RevLogError("Failed to allocate memory for the revision record "
+                    "(%llu bytes).",
                     sizeof(REVISION_RECORD));
         return NULL;
     }
@@ -1808,7 +1864,7 @@ RevFindRevisionRecordForLanguageByExtension(
     }
 
     /*
-     * If no matching language or file type was found for the provided extension,
+     * If no matching language or file type was found for the provided extension
      * initialize a new revision record.
      */
     revisionRecord = RevInitializeRevisionRecord(Extension,
@@ -1852,7 +1908,7 @@ RevEnumerateRecursively(
 
     /*
      * Each directory path should indicate that we are examining all files.
-     * Check if the passed RootDirectoryPath already includes the wildcard (an asterisk).
+     * Check if the passed RootDirectoryPath already includes the wildcard (*).
      */
     if (wcsstr(RootDirectoryPath, ASTERISK) == NULL) {
         /*
@@ -1917,8 +1973,8 @@ RevEnumerateRecursively(
 
         /*
          * Then append the subdirectory name that need to be traversed next.
-         * N.B. The wildcard character (an asterisk) is not needed to be added as
-         * it is done before calling FindFirstFileW.
+         * N.B. The wildcard character (an asterisk) is not needed to be added
+         * as it is done before calling FindFirstFileW.
          */
         subPath = RevStringAppend(subPath,
                                   findFileData.cFileName);
@@ -1945,11 +2001,13 @@ RevEnumerateRecursively(
         } else {
 
             /*
-             * If found a file, check if the file should be revised, and if so, revise it.
+             * If found a file, check if the file should be revised, and if so,
+             * revise it.
              *
-             * The revision should be performed only if the file extension has been recognized.
-             * For this purpose it is enough to pass only the file name (findFileData.cFileName),
-             * but for file revision the full path (subdirectoryPath) is required.
+             * The revision should be performed only if the file extension has
+             * been recognized. For this purpose it is enough to pass only the
+             * file name (findFileData.cFileName), but for file revision the
+             * full path (subdirectoryPath) is required.
              */
             if (RevShouldReviseFile(findFileData.cFileName)) {
                 if (!RevReviseFile(subPath)) {
@@ -2046,7 +2104,8 @@ RevReviseFile(
                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
                       NULL);
     if (file == INVALID_HANDLE_VALUE) {
-        RevLogError("Failed to open the file \"%ls\". The last known error: %ls.",
+        RevLogError("Failed to open the file \"%ls\". "
+                    "The last known error: %ls.",
                     FilePath,
                     RevGetLastKnownWin32Error());
         status = FALSE;
@@ -2057,7 +2116,8 @@ RevReviseFile(
      * Retrieve the size of the file
      */
     if (!GetFileSizeEx(file, &fileSize)) {
-        RevLogError("Failed to retrieve the size of the file \"%ls\". The last known error: %ls.",
+        RevLogError("Failed to retrieve the size of the file \"%ls\". "
+                    "The last known error: %ls.",
                     FilePath,
                     RevGetLastKnownWin32Error());
         status = FALSE;
@@ -2066,10 +2126,10 @@ RevReviseFile(
 
     /*
      * Allocate buffer for the entire file.
-     * N.B. Currently, reading only ANSI files is supported, so the read buffer is
-     * allocated with a size that takes sizeof(CHAR) into account. It is assumed that
-     * most source code files do not use utf-16 encoding, but support for encoding detection
-     * should be added in the future.
+     * N.B. Currently, reading only ANSI files is supported, so the read buffer
+     * is allocated with a size that takes sizeof(CHAR) into account.
+     * It is assumed that most source code files do not use utf-16 encoding, but
+     * support for encoding detection should be added in the future.
      */
     fileBufferSize = (DWORD)fileSize.QuadPart * sizeof(CHAR);
     fileBuffer = (PCHAR)malloc(fileBufferSize);
@@ -2088,7 +2148,8 @@ RevReviseFile(
                   fileBufferSize,
                   &bytesRead,
                   NULL)) {
-        RevLogError("Failed to read the file \"%ls\". The last known error: %ls.",
+        RevLogError("Failed to read the file \"%ls\". "
+                    "The last known error: %ls.",
                     FilePath,
                     RevGetLastKnownWin32Error());
         status = FALSE;
@@ -2147,19 +2208,21 @@ RevReviseFile(
      */
     fileExtension = wcsrchr(FilePath, L'.');
     if (fileExtension == NULL) {
-        RevLogError("Failed to determine the extension for the file \"%ls\".", FilePath);
+        RevLogError("Failed to determine the extension for the file \"%ls\".",
+                    FilePath);
         status = FALSE;
         goto Exit;
     }
 
     /*
      * If there is a revision record for that language/file type in the revision
-     * record list, we will update it. If this file type has not been encountered,
+     * record list, we'll update it. If this file type hasn't been encountered,
      * we create a new node for it in the list.
      */
     revisionRecord = RevFindRevisionRecordForLanguageByExtension(fileExtension);
     if (revisionRecord == NULL) {
-        RevLogError("Failed to get/initialize the revision record for the file extension \"%ls\".",
+        RevLogError("Failed to get/initialize the revision record for the file "
+                    "extension \"%ls\".",
                     fileExtension);
         status = FALSE;
         goto Exit;
@@ -2217,7 +2280,8 @@ RevOutputRevisionStatistics(
     RevPrint(L"----------------------------------------------------------------------------------\n");
 
     /*
-     * Iterate through the revision record list and print statistics for each file type.
+     * Iterate through the revision record list and print statistics for each
+     * file type.
      */
     for (entry = Revision->RevisionRecordListHead.Flink;
          entry != &Revision->RevisionRecordListHead;
@@ -2253,6 +2317,7 @@ wmain(
 {
     int status = 0;
     BOOL measuringTime = TRUE;
+    double resultTime = 0;
     LARGE_INTEGER startQpc = {0};
     LARGE_INTEGER endQpc = {0};
     LARGE_INTEGER frequency = {0};
@@ -2262,7 +2327,8 @@ wmain(
     LONG index;
 
     SupportAnsi = SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE),
-                                 ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+                                 ENABLE_PROCESSED_OUTPUT |
+                                 ENABLE_VIRTUAL_TERMINAL_PROCESSING);
 
     RevPrint(WelcomeString);
 
@@ -2272,8 +2338,9 @@ wmain(
 
      // if (argc <= 1) {
      //     /*
-     //      * The command line arguments were not passed at all, so a folder selection dialog
-     //      * should be opened where the user can select a directory to perform the revision.
+     //      * The command line arguments were not passed at all, so a folder
+     //      * selection dialog should be opened where the user can select a
+     //      * directory to perform the revision.
      //      */
      //     RevPrint(UsageString);
      //     goto Exit;
@@ -2283,8 +2350,8 @@ wmain(
      //     wcscmp(argv[1], L"-h") == 0 ||
      //     wcscmp(argv[1], L"-?") == 0) {
      //     /*
-     //      * The only command line argument passed was '-help', '-h', or '-?', so show the
-     //      * instruction for use.
+     //      * The only command line argument passed was '-help', '-h', or '-?',
+     //      * so show the instruction for use.
      //      */
      //     RevPrint(UsageString);
      //     goto Exit;
@@ -2296,7 +2363,8 @@ wmain(
 
     if (wcscmp(argv[1], L".") == 0) {
         /*
-         * If a dot was given, we need to revise the current directory. Let's find it. TODO.
+         * If a dot was given, we need to revise the current directory.
+         * Let's find it. TODO.
          */
         assert(FALSE);
 
@@ -2325,7 +2393,8 @@ wmain(
 
         revisionPath = RevStringPrepend(revisionPath, MAX_PATH_FIX);
         if (revisionPath == NULL) {
-            RevLogError("Failed to normalize the revision path (RevStringPrepend failed).");
+            RevLogError("Failed to normalize the revision path "
+                        "(RevStringPrepend failed).");
             status = -1;
             goto Exit;
         }
@@ -2378,7 +2447,8 @@ wmain(
     }
 
     if (!QueryPerformanceFrequency(&frequency)) {
-        RevLogError("Failed to retrieve the frequency of the performance counter.");
+        RevLogError("Failed to retrieve the frequency of the performance "
+                    "counter.");
         measuringTime = FALSE;
     }
 
@@ -2399,9 +2469,11 @@ wmain(
     RevOutputRevisionStatistics();
 
     if (measuringTime) {
+        resultTime =
+            (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart;
         RevPrintEx(Cyan,
                    L"Time: %.3fs",
-                   (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart);
+                   resultTime);
     }
 
     if (Revision->CountOfIgnoredFiles > 0) {
