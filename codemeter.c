@@ -244,6 +244,7 @@ const PWCHAR ConsoleForegroundColors[] = {
  */
 REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".abap",               L"ABAP"},
+    {L".asl",               L"ACPI Machine Language "},
     {L".ac",                 L"m4"},
     {L".ada",                L"Ada"},
     {L".adb",                L"Ada"},
