@@ -1997,6 +1997,13 @@ RevEnumerateRecursively(
          */
         if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
 
+            /* Skip reparse points to avoid infinite loops. */
+            if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+                RevLogWarning("Skipping reparse point: %ls", subPath);
+                free(subPath);
+                continue;
+            }
+
             /* For directories, duplicate the subPath so that recursive call
                owns its copy. */
             PWCHAR subPathCopy = _wcsdup(subPath);
