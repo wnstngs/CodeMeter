@@ -1757,8 +1757,7 @@ RevStartRevision(
 {
     BOOL status = TRUE;
 
-    if (Revision == NULL ||
-        Revision->InitParams.RootDirectory == NULL) {
+    if (Revision == NULL || Revision->InitParams.RootDirectory == NULL) {
         RevLogError("The revision is not initialized/initialized correctly.");
         status = FALSE;
         goto Exit;
@@ -1934,6 +1933,9 @@ RevEnumerateRecursively(
             status = FALSE;
             goto Exit;
         }
+    } else {
+
+        searchPath = _wcsdup(RootDirectoryPath);
     }
 
     /*
@@ -1971,25 +1973,18 @@ RevEnumerateRecursively(
             continue;
         }
 
-        /*
-         * To construct a subpath, append the "\" to the RootDirectoryPath.
-         */
-        subPath = RevStringAppend(RootDirectoryPath,
-                                  L"\\");
-        if (subPath == NULL) {
-            RevLogError("Failed to normalize the revision subdirectory path "
-                        "(RevStringAppend failed).");
+        /* Build the new subpath: combine RootDirectoryPath, L"\\" and
+           file name. */
+        PWCHAR temp = RevStringAppend(RootDirectoryPath, L"\\");
+        if (temp == NULL) {
+            RevLogError("Failed to append backslash.");
             status = FALSE;
             break;
         }
+        subPath = RevStringAppend(temp, findFileData.cFileName);
 
-        /*
-         * Then append the subdirectory name that need to be traversed next.
-         * N.B. The wildcard character (an asterisk) is not needed to be added
-         * as it is done before calling FindFirstFileW.
-         */
-        subPath = RevStringAppend(subPath,
-                                  findFileData.cFileName);
+        free(temp);
+
         if (subPath == NULL) {
             RevLogError("Failed to normalize the revision subdirectory path "
                         "(RevStringAppend failed).");
@@ -2002,10 +1997,16 @@ RevEnumerateRecursively(
          */
         if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
 
+            /* For directories, duplicate the subPath so that recursive call
+               owns its copy. */
+            PWCHAR subPathCopy = _wcsdup(subPath);
+            free(subPath);
+            subPath = NULL;
+
             /*
              * Recursively traverse a subdirectory.
              */
-            if (!RevEnumerateRecursively(subPath)) {
+            if (!RevEnumerateRecursively(subPathCopy)) {
                 RevLogError("Recursive subdirectory traversal failed.");
                 status = FALSE;
                 break;
@@ -2030,6 +2031,8 @@ RevEnumerateRecursively(
 
                 /* Increment the total count of ignored files. */
                 Revision->CountOfIgnoredFiles += 1;
+
+                free(subPath);
             }
         }
 
