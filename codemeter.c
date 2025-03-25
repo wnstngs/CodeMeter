@@ -2341,6 +2341,10 @@ wmain(
                                  ENABLE_PROCESSED_OUTPUT |
                                  ENABLE_VIRTUAL_TERMINAL_PROCESSING);
 
+    if (!SupportAnsi) {
+        RevLogWarning("Failed to enable ANSI escape sequences.");
+    }
+
     RevPrint(WelcomeString);
 
     /*
