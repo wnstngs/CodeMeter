@@ -2345,26 +2345,26 @@ wmain(
      * Process the command line arguments if any.
      */
 
-     // if (argc <= 1) {
-     //     /*
-     //      * The command line arguments were not passed at all, so a folder
-     //      * selection dialog should be opened where the user can select a
-     //      * directory to perform the revision.
-     //      */
-     //     RevPrint(UsageString);
-     //     goto Exit;
-     // }
-     //
-     // if (wcscmp(argv[1], L"-help") == 0 ||
-     //     wcscmp(argv[1], L"-h") == 0 ||
-     //     wcscmp(argv[1], L"-?") == 0) {
-     //     /*
-     //      * The only command line argument passed was '-help', '-h', or '-?',
-     //      * so show the instruction for use.
-     //      */
-     //     RevPrint(UsageString);
-     //     goto Exit;
-     // }
+     if (argc <= 1) {
+         /*
+          * The command line arguments were not passed at all, so a folder
+          * selection dialog should be opened where the user can select a
+          * directory to perform the revision.
+          */
+         RevPrint(UsageString);
+         goto Exit;
+     }
+
+     if (wcscmp(argv[1], L"-help") == 0 ||
+         wcscmp(argv[1], L"-h") == 0 ||
+         wcscmp(argv[1], L"-?") == 0) {
+         /*
+          * The only command line argument passed was '-help', '-h', or '-?',
+          * so show the instruction for use.
+          */
+         RevPrint(UsageString);
+         goto Exit;
+     }
 
     /*
      * The first argument is the path to the root revision directory:
@@ -2376,11 +2376,20 @@ wmain(
          * Let's find it. TODO.
          */
         assert(FALSE);
-
-        revisionPath = L"c:\\dev"; //argv[1];
+        goto Exit;
 
     } else {
-        revisionPath = L"c:\\dev"; //argv[1];
+
+        /*
+         * Use the user provided path
+         */
+        revisionPath = _wcsdup(argv[1]);
+    }
+
+    if (revisionPath == NULL) {
+        RevLogError("Failed to allocate memory for revisionPath.");
+        status = -1;
+        goto Exit;
     }
 
     revisionPathLength = wcslen(revisionPath);
@@ -2400,13 +2409,15 @@ wmain(
      */
     if (wcsncmp(revisionPath, MAX_PATH_FIX, wcslen(MAX_PATH_FIX)) != 0) {
 
-        revisionPath = RevStringPrepend(revisionPath, MAX_PATH_FIX);
-        if (revisionPath == NULL) {
+        PWCHAR temp = RevStringPrepend(revisionPath, MAX_PATH_FIX);
+        if (temp == NULL) {
             RevLogError("Failed to normalize the revision path "
                         "(RevStringPrepend failed).");
             status = -1;
             goto Exit;
         }
+        free(revisionPath);
+        revisionPath = temp;
     }
 
     /*
