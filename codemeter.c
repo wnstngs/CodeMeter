@@ -1764,7 +1764,18 @@ RevStartRevision(
         goto Exit;
     }
 
-    RevEnumerateRecursively(Revision->InitParams.RootDirectory);
+    /* Pass a duplicate of the root directory so the recursive function can
+       allocate/free its own copy. */
+    PWCHAR rootPathCopy = _wcsdup(Revision->InitParams.RootDirectory);
+    if (rootPathCopy == NULL) {
+        RevLogError("Failed to duplicate root directory path.");
+        status = FALSE;
+        goto Exit;
+    }
+
+    RevEnumerateRecursively(rootPathCopy);
+
+    free(rootPathCopy);
 
 Exit:
     return status;
@@ -2027,12 +2038,6 @@ RevEnumerateRecursively(
     FindClose(findFile);
 
 Exit:
-    /*
-     * Free after RevStringAppend.
-     */
-    if (RootDirectoryPath) {
-        free(RootDirectoryPath);
-    }
 
     return status;
 }
