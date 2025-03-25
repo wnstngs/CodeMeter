@@ -2139,6 +2139,8 @@ RevReviseFile(
      * is allocated with a size that takes sizeof(CHAR) into account.
      * It is assumed that most source code files do not use utf-16 encoding, but
      * support for encoding detection should be added in the future.
+     * TODO: Check that file size is not too huge (prevent DWORD overflow):
+     *       `if (fileSize.QuadPart > (SIZE_MAX / sizeof(CHAR))) {} else {}`
      */
     fileBufferSize = (DWORD)fileSize.QuadPart * sizeof(CHAR);
     fileBuffer = (PCHAR)malloc(fileBufferSize);
