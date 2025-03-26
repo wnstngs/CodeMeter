@@ -21,11 +21,10 @@ Abstract:
 --*/
 
 //
-// ------------------------------------------------------------------- Includes
+// -------------------------------------------------------------------- Includes
 //
 
 #include <assert.h>
-#include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -38,7 +37,7 @@ Abstract:
 #include <Windows.h>
 
 //
-// ------------------------------------------------------ Data Type Definitions
+// ------------------------------------------------------- Data Type Definitions
 //
 
 /**
@@ -176,7 +175,7 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
 } CONSOLE_FOREGROUND_COLOR;
 
 //
-// ------------------------------------------------------ Constants and Globals
+// ------------------------------------------------------- Constants and Globals
 //
 
 /**
@@ -190,6 +189,9 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
  * contents.
  */
 #define ASTERISK        L"\\*"
+
+#define CARRIAGE_RETURN  '\r'
+#define LINE_FEED        '\n'
 
 const WCHAR WelcomeString[] =
     L"CodeMeter v0.0.1                 Copyright(c) 2023 Glebs\n"
@@ -1195,7 +1197,7 @@ PREVISION Revision = NULL;
 BOOL SupportAnsi;
 
 //
-// -------------------------------------------------------- Function Prototypes
+// --------------------------------------------------------- Function Prototypes
 //
 
 /**
@@ -1787,7 +1789,7 @@ RevInitializeRevisionRecord(
     _In_z_ PWCHAR LanguageOrFileType
     )
 {
-    PREVISION_RECORD revisionRecord;
+    PREVISION_RECORD revisionRecord = NULL;
 
     revisionRecord = (PREVISION_RECORD)malloc(sizeof(REVISION_RECORD));
     if (revisionRecord == NULL) {
@@ -1881,7 +1883,7 @@ RevFindRevisionRecordForLanguageByExtension(
     revisionRecord = RevInitializeRevisionRecord(Extension,
                                                  languageOrFileType);
     if (revisionRecord == NULL) {
-        RevLogError("Failed to initialize a revision record (\"%ls\", \"%ls\").",
+        RevLogError("Failed to initialize a revision record (\"%ls\",\"%ls\").",
                     Extension,
                     languageOrFileType);
         return NULL;
@@ -1954,8 +1956,8 @@ RevEnumerateRecursively(
      * Check if FindFirstFileW failed.
      */
     if (findFile == INVALID_HANDLE_VALUE) {
-        RevLogError("Failed to find a file named \"%ls\" to start the enumeration. "
-                    "The last known error: %ls",
+        RevLogError("Failed to find a file named \"%ls\" to start the "
+                    "enumeration. Error: %ls",
                     RootDirectoryPath,
                     RevGetLastKnownWin32Error());
         status = FALSE;
@@ -2031,9 +2033,12 @@ RevEnumerateRecursively(
              */
             if (RevShouldReviseFile(findFileData.cFileName)) {
                 if (!RevReviseFile(subPath)) {
-                    RevLogError("RevReviseFile failed to revise the file \"%ls\".",
+                    RevLogError("RevReviseFile failed to revise file \"%ls\".",
                                 subPath);
                 }
+
+                free(subPath);
+
             } else {
 
                 /* Increment the total count of ignored files. */
@@ -2095,19 +2100,19 @@ RevReviseFile(
     )
 {
     BOOL status = TRUE;
-    PREVISION_RECORD revisionRecord;
+    PREVISION_RECORD revisionRecord = NULL;
     ULONGLONG lineCountTotal = 0;
     ULONGLONG lineCountBlank = 0;
     PCHAR fileBuffer = NULL;
-    DWORD fileBufferSize;
-    PWCHAR fileExtension;
-    HANDLE file;
+    DWORD fileBufferSize = 0;
+    PWCHAR fileExtension = NULL;
+    HANDLE file = INVALID_HANDLE_VALUE;
     LARGE_INTEGER fileSize;
-    DWORD bytesRead;
-    BOOL isPreviousCharCarriageReturn;
-    BOOL isNextCharCarriageReturn;
-    BOOL isNextCharNewline;
-    DWORD index;
+    DWORD bytesRead = 0;
+    DWORD index = 0;
+    BOOL isBlankLine = TRUE;
+    BOOL hasContent = FALSE;
+    BOOL previousWasCR = FALSE;
 
     /*
      * Attempt to open the file.
@@ -2120,8 +2125,7 @@ RevReviseFile(
                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
                       NULL);
     if (file == INVALID_HANDLE_VALUE) {
-        RevLogError("Failed to open the file \"%ls\". "
-                    "The last known error: %ls.",
+        RevLogError("Failed to open the file \"%ls\". Error: %ls.",
                     FilePath,
                     RevGetLastKnownWin32Error());
         status = FALSE;
@@ -2140,6 +2144,11 @@ RevReviseFile(
         goto Exit;
     }
 
+    /* Empty file, nothing to count. */
+    if (fileSize.QuadPart == 0) {
+        goto Exit;
+    }
+
     /*
      * Allocate buffer for the entire file.
      * N.B. Currently, reading only ANSI files is supported, so the read buffer
@@ -2149,75 +2158,82 @@ RevReviseFile(
      * TODO: Check that file size is not too huge (prevent DWORD overflow):
      *       `if (fileSize.QuadPart > (SIZE_MAX / sizeof(CHAR))) {} else {}`
      */
-    fileBufferSize = (DWORD)fileSize.QuadPart * sizeof(CHAR);
+    fileBufferSize = (DWORD)fileSize.QuadPart;
     fileBuffer = (PCHAR)malloc(fileBufferSize);
     if (fileBuffer == NULL) {
-        RevLogError("Failed to allocate a line buffer (%llu bytes)",
+        RevLogError("Failed to allocate %llu bytes for file buffer",
                     fileSize.QuadPart * sizeof(CHAR));
         status = FALSE;
         goto Exit;
     }
 
     /*
-     * Attempt to read the file.
+     * Read entire file contents into buffer.
      */
     if (!ReadFile(file,
                   fileBuffer,
                   fileBufferSize,
                   &bytesRead,
                   NULL)) {
-        RevLogError("Failed to read the file \"%ls\". "
-                    "The last known error: %ls.",
+        RevLogError("Failed to read file \"%ls\". Error: %ls.",
                     FilePath,
                     RevGetLastKnownWin32Error());
         status = FALSE;
         goto Exit;
     }
 
-    for (index = 0; index < bytesRead; index++) {
-        if (fileBuffer[index] == '\n') {
+    /*
+     * Main line counting logic.
+     */
+    for (index = 0; index < bytesRead; index += 1) {
+
+        const CHAR currentChar = fileBuffer[index];
+
+        /*
+         * Handle CRLF sequences as single newline.
+         */
+        if (previousWasCR && currentChar == LINE_FEED) {
+            previousWasCR = FALSE;
+            continue;
+        }
+
+        if (currentChar == CARRIAGE_RETURN || currentChar == LINE_FEED) {
 
             /*
-             * Increment the total line count for every newline
-             * character encountered.
+             * Count line endings and blank lines.
              */
-            ++lineCountTotal;
-
-            /* Check if the previous character is a carriage return character. */
-            isPreviousCharCarriageReturn = (index > 0) && (fileBuffer[index - 1] == '\r');
-
-            /* Check if the next character is a carriage return character. */
-            isNextCharCarriageReturn = (index < bytesRead - 2) && (fileBuffer[index + 1] == '\r');
-
-            /* Check if the character after the next one is a newline character. */
-            isNextCharNewline = (index < bytesRead - 2) && (fileBuffer[index + 2] == '\n');
-
-            /*
-             * Check is it a blank line?
-             */
-            if (isPreviousCharCarriageReturn &&
-                isNextCharCarriageReturn &&
-                isNextCharNewline) {
-
-                /* If so, increment the blank line count. */
-                ++lineCountBlank;
+            lineCountTotal++;
+            if (isBlankLine) {
+                lineCountBlank++;
             }
+
+            /*
+             * Reset state for new line.
+             */
+            isBlankLine = TRUE;
+            hasContent = FALSE;
+            previousWasCR = (currentChar == CARRIAGE_RETURN);
+
+        } else {
+
+            /*
+             * Track non-whitespace content.
+             */
+            if (!isspace((UCHAR)currentChar)) {
+                isBlankLine = FALSE;
+                hasContent = TRUE;
+            }
+            previousWasCR = FALSE;
         }
     }
-    if (fileSize.QuadPart > 0) {
-        /*
-         * Increment the total line count for the last line.
-         */
-        ++lineCountTotal;
 
-        /*
-         * Check if the last line is a blank line.
-         */
-        if (bytesRead > 1 &&
-            fileBuffer[bytesRead - 2] == '\r' &&
-            fileBuffer[bytesRead - 1] == '\n') {
-            /* If so, increment the blank line count. */
-            ++lineCountBlank;
+    /*
+     * Count final line if it contains content.
+     */
+    if (hasContent) {
+        lineCountTotal++;
+        if (isBlankLine) {
+            lineCountBlank++;
         }
     }
 
@@ -2239,8 +2255,8 @@ RevReviseFile(
      */
     revisionRecord = RevFindRevisionRecordForLanguageByExtension(fileExtension);
     if (revisionRecord == NULL) {
-        RevLogError("Failed to get/initialize the revision record for the file "
-                    "extension \"%ls\".",
+        RevLogError("Failed to find/initialize the revision record for the file"
+                    " extension \"%ls\".",
                     fileExtension);
         status = FALSE;
         goto Exit;
@@ -2261,19 +2277,17 @@ RevReviseFile(
     Revision->CountOfFiles += 1;
 
 Exit:
-    CloseHandle(file);
-
-    /*
-     * Free after RevEnumerateRecursively.
-     */
-    if (FilePath) {
-        free(FilePath);
-        FilePath = NULL;
+    if (file != INVALID_HANDLE_VALUE) {
+        CloseHandle(file);
     }
 
     if (fileBuffer) {
         free(fileBuffer);
     }
+
+    /*
+     * N.B. Don't free FilePath here, it's managed by the caller.
+     */
 
     return status;
 }
@@ -2289,13 +2303,15 @@ RevOutputRevisionStatistics(
     /*
      * The table header.
      */
-    RevPrint(L"----------------------------------------------------------------------------------\n");
+    RevPrint(L"----------------------------------------------------------------"
+             "------------------\n");
     RevPrint(L"%-25s%10s%22s%25s\n",
              L"File Type",
              L"Files",
              L"Blank",
              L"Total");
-    RevPrint(L"----------------------------------------------------------------------------------\n");
+    RevPrint(L"----------------------------------------------------------------"
+             "------------------\n");
 
     /*
      * Iterate through the revision record list and print statistics for each
@@ -2318,13 +2334,15 @@ RevOutputRevisionStatistics(
     /*
      * The table footer with total statistics.
      */
-    RevPrint(L"----------------------------------------------------------------------------------\n");
+    RevPrint(L"----------------------------------------------------------------"
+             "------------------\n");
     RevPrint(L"%-25s%10u%22u%25u\n",
              L"Total:",
              Revision->CountOfFiles,
              Revision->CountOfLinesBlank,
              Revision->CountOfLinesTotal);
-    RevPrint(L"----------------------------------------------------------------------------------\n");
+    RevPrint(L"----------------------------------------------------------------"
+             "------------------\n");
 }
 
 int
@@ -2384,18 +2402,11 @@ wmain(
      */
 
     if (wcscmp(argv[1], L".") == 0) {
-        /*
-         * If a dot was given, we need to revise the current directory.
-         * Let's find it. TODO.
-         */
-        assert(FALSE);
-        goto Exit;
-
+        WCHAR currentDir[MAX_PATH];
+        GetCurrentDirectoryW(MAX_PATH, currentDir);
+        revisionPath = _wcsdup(currentDir);
     } else {
-
-        /*
-         * Use the user provided path
-         */
+        /* Use the user provided path */
         revisionPath = _wcsdup(argv[1]);
     }
 
@@ -2408,8 +2419,8 @@ wmain(
     revisionPathLength = wcslen(revisionPath);
 
     /*
-     * As part of improving input parameter validation, remove trailing '\' symbols
-     * replacing them with '\0' character.
+     * As part of improving input parameter validation, remove trailing '\'
+     * symbols replacing them with '\0' character.
      */
     while (revisionPathLength > 0 &&
            revisionPath[revisionPathLength - 1] == L'\\') {
@@ -2505,7 +2516,7 @@ wmain(
         resultTime =
             (double)(endQpc.QuadPart - startQpc.QuadPart) / frequency.QuadPart;
         RevPrintEx(Cyan,
-                   L"Time: %.3fs",
+                   L"Time: %.3fs\n",
                    resultTime);
     }
 
