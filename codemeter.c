@@ -191,6 +191,7 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
 #define ASTERISK        L"\\*"
 
 #define CARRIAGE_RETURN  '\r'
+
 #define LINE_FEED        '\n'
 
 const WCHAR WelcomeString[] =
@@ -2111,7 +2112,6 @@ RevReviseFile(
     DWORD bytesRead = 0;
     DWORD index = 0;
     BOOL isBlankLine = TRUE;
-    BOOL hasContent = FALSE;
     BOOL previousWasCR = FALSE;
 
     /*
@@ -2183,14 +2183,19 @@ RevReviseFile(
     }
 
     /*
-     * Main line counting logic.
+     * Process each character in the file buffer to count lines.
+     * The logic correctly handles CR, LF, and CRLF sequences:
+     *   - CRLF sequences are treated as a single newline.
+     *   - Every newline encountered increments the line count,
+     *     and if the line contained only whitespace, it is counted as blank.
      */
     for (index = 0; index < bytesRead; index += 1) {
 
         const CHAR currentChar = fileBuffer[index];
 
         /*
-         * Handle CRLF sequences as single newline.
+         * If the previous character was a CR and the current character is LF,
+         * skip this LF to prevent double-counting a CRLF as two newlines.
          */
         if (previousWasCR && currentChar == LINE_FEED) {
             previousWasCR = FALSE;
@@ -2199,41 +2204,38 @@ RevReviseFile(
 
         if (currentChar == CARRIAGE_RETURN || currentChar == LINE_FEED) {
 
-            /*
-             * Count line endings and blank lines.
-             */
-            lineCountTotal++;
+            lineCountTotal += 1;
             if (isBlankLine) {
-                lineCountBlank++;
+                lineCountBlank += 1;
             }
 
             /*
              * Reset state for new line.
              */
             isBlankLine = TRUE;
-            hasContent = FALSE;
             previousWasCR = (currentChar == CARRIAGE_RETURN);
 
         } else {
 
             /*
-             * Track non-whitespace content.
+             * For any non-newline character, update the blank line flag if
+             * the character is not whitespace.
              */
             if (!isspace((UCHAR)currentChar)) {
                 isBlankLine = FALSE;
-                hasContent = TRUE;
             }
             previousWasCR = FALSE;
         }
     }
 
     /*
-     * Count final line if it contains content.
+     * Even if the file ends with a newline, that newline indicates an extra
+     * (blank) line that should be counted.
      */
-    if (hasContent) {
-        lineCountTotal++;
+    if (bytesRead > 0) {
+        lineCountTotal += 1;
         if (isBlankLine) {
-            lineCountBlank++;
+            lineCountBlank += 1;
         }
     }
 
@@ -2297,8 +2299,8 @@ RevOutputRevisionStatistics(
     VOID
     )
 {
-    PLIST_ENTRY entry;
-    PREVISION_RECORD revisionRecord;
+    PLIST_ENTRY entry = NULL;
+    PREVISION_RECORD revisionRecord = NULL;
 
     /*
      * The table header.
@@ -2358,9 +2360,9 @@ wmain(
     LARGE_INTEGER endQpc = {0};
     LARGE_INTEGER frequency = {0};
     PWCHAR revisionPath = NULL;
-    SIZE_T revisionPathLength;
+    SIZE_T revisionPathLength = 0;
     REVISION_INIT_PARAMS revisionInitParams;
-    LONG index;
+    LONG index = 0;
 
     SupportAnsi = SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE),
                                  ENABLE_PROCESSED_OUTPUT |
