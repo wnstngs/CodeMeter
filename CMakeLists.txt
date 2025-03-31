@@ -5,6 +5,8 @@ add_executable(CodeMeter
         codemeter.c
 )
 
+target_link_libraries(CodeMeter PRIVATE Pathcch.lib)
+
 if(MSVC)
     target_compile_options(CodeMeter PRIVATE /W4 /WX)
 

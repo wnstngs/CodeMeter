@@ -1,6 +1,6 @@
 /*++
 
-Copyright (c) 2023  wnstngs. All rights reserved.
+Copyright (c) 2023-2025  wnstngs. All rights reserved.
 
 Module Name:
 
@@ -33,8 +33,9 @@ Abstract:
 #endif
 
 #define WIN32_LEAN_AND_MEAN
-
 #include <Windows.h>
+
+#include <pathcch.h>
 
 //
 // ------------------------------------------------------- Data Type Definitions
@@ -191,7 +192,6 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
 #define ASTERISK        L"\\*"
 
 #define CARRIAGE_RETURN  '\r'
-
 #define LINE_FEED        '\n'
 
 const WCHAR WelcomeString[] =
@@ -2159,6 +2159,12 @@ RevReviseFile(
      *       `if (fileSize.QuadPart > (SIZE_MAX / sizeof(CHAR))) {} else {}`
      */
     fileBufferSize = (DWORD)fileSize.QuadPart;
+    if (fileSize.QuadPart > (SIZE_MAX / sizeof(CHAR))) {
+        RevLogError("File size (%ull) too huge for buffer allocation.",
+                    fileSize.QuadPart);
+        status = FALSE;
+        goto Exit;
+    }
     fileBuffer = (PCHAR)malloc(fileBufferSize);
     if (fileBuffer == NULL) {
         RevLogError("Failed to allocate %llu bytes for file buffer",
@@ -2354,14 +2360,13 @@ wmain(
     )
 {
     int status = 0;
+    HRESULT hr;
     BOOL measuringTime = TRUE;
     double resultTime = 0;
     LARGE_INTEGER startQpc = {0};
     LARGE_INTEGER endQpc = {0};
     LARGE_INTEGER frequency = {0};
-    PWCHAR revisionPath = NULL;
-    SIZE_T revisionPathLength = 0;
-    REVISION_INIT_PARAMS revisionInitParams;
+    REVISION_INIT_PARAMS revisionInitParams = {0};
     LONG index = 0;
 
     SupportAnsi = SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE),
@@ -2399,58 +2404,15 @@ wmain(
          goto Exit;
      }
 
-    /*
-     * The first argument is the path to the root revision directory:
-     */
-
-    if (wcscmp(argv[1], L".") == 0) {
-        WCHAR currentDir[MAX_PATH];
-        GetCurrentDirectoryW(MAX_PATH, currentDir);
-        revisionPath = _wcsdup(currentDir);
-    } else {
-        /* Use the user provided path */
-        revisionPath = _wcsdup(argv[1]);
-    }
-
-    if (revisionPath == NULL) {
-        RevLogError("Failed to allocate memory for revisionPath.");
+    hr = PathAllocCanonicalize(argv[1],
+                               PATHCCH_ALLOW_LONG_PATHS |
+                               PATHCCH_FORCE_ENABLE_LONG_NAME_PROCESS,
+                               &revisionInitParams.RootDirectory);
+    if (FAILED(hr)) {
+        RevLogError("Path normalization failed: 0x%08X", hr);
         status = -1;
         goto Exit;
     }
-
-    revisionPathLength = wcslen(revisionPath);
-
-    /*
-     * As part of improving input parameter validation, remove trailing '\'
-     * symbols replacing them with '\0' character.
-     */
-    while (revisionPathLength > 0 &&
-           revisionPath[revisionPathLength - 1] == L'\\') {
-        revisionPath[--revisionPathLength] = L'\0';
-    }
-
-    /*
-     * Prepend L"\\?\" to the `argv[1]` if not prepended yet to avoid the obsolete
-     * MAX_PATH limitation.
-     */
-    if (wcsncmp(revisionPath, MAX_PATH_FIX, wcslen(MAX_PATH_FIX)) != 0) {
-
-        PWCHAR temp = RevStringPrepend(revisionPath, MAX_PATH_FIX);
-        if (temp == NULL) {
-            RevLogError("Failed to normalize the revision path "
-                        "(RevStringPrepend failed).");
-            status = -1;
-            goto Exit;
-        }
-        free(revisionPath);
-        revisionPath = temp;
-    }
-
-    /*
-     * Now we are ready to set the root path of the revision directory.
-     */
-    revisionInitParams.RootDirectory = revisionPath;
-    revisionInitParams.IsVerboseMode = FALSE;
 
     if (argc > 2) {
         /*
@@ -2481,6 +2443,8 @@ wmain(
     if (revisionInitParams.IsVerboseMode == FALSE) {
         revisionInitParams.IsVerboseMode = TRUE;
     }
+#else
+    revisionInitParams.IsVerboseMode = FALSE;
 #endif
 
     /*
@@ -2533,7 +2497,10 @@ wmain(
 #endif
 
 Exit:
-    free(revisionPath);
+
+    if (revisionInitParams.RootDirectory != NULL) {
+        LocalFree(revisionInitParams.RootDirectory);
+    }
 
     return status;
 }
