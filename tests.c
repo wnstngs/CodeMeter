@@ -106,7 +106,7 @@ test_file_extension_recognition(void)
 static int
 test_line_counting(void)
 {
-    const char *testContent = "line1\nline2\r\nline3";
+    const char *testContent = "line1\nline2\r\nline3\n\n";
     PWCHAR tempFileName = L"temp_test_file.txt";
     FILE *fp = _wfopen(tempFileName, L"wb");
     if (fp == NULL) {
@@ -147,8 +147,8 @@ test_line_counting(void)
         return 1;
     }
 
-    ASSERT_EQUAL(Revision->CountOfLinesTotal, 3);
-    ASSERT_EQUAL(Revision->CountOfLinesBlank, 0);
+    ASSERT_EQUAL(Revision->CountOfLinesTotal, 5);
+    ASSERT_EQUAL(Revision->CountOfLinesBlank, 2);
 
     remove("temp_test_file.txt");
     return 0;
