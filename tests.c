@@ -15,6 +15,7 @@ Abstract:
 #include <stdio.h>
 #include <stdlib.h>
 #include <wchar.h>
+
 #include "codemeter.h"
 
 #define _CRT_SECURE_NO_WARNINGS
