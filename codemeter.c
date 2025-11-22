@@ -1923,8 +1923,10 @@ RevStartRevision(
         goto Exit;
     }
 
-    /* Pass a duplicate of the root directory so the recursive function can
-       allocate/free its own copy. */
+    //
+    // Pass a duplicate of the root directory so the recursive function can
+    // allocate/free its own copy.
+    //
     PWCHAR rootPathCopy = _wcsdup(Revision->InitParams.RootDirectory);
     if (rootPathCopy == NULL) {
         RevLogError("Failed to duplicate root directory path.");
@@ -1932,11 +1934,12 @@ RevStartRevision(
         goto Exit;
     }
 
-    RevEnumerateRecursively(rootPathCopy);
+    status = RevEnumerateRecursively(rootPathCopy);
 
     free(rootPathCopy);
 
 Exit:
+
     return status;
 }
 
@@ -2167,57 +2170,100 @@ RevEnumerateRecursively(
     BOOL status = TRUE;
     HANDLE findFile = INVALID_HANDLE_VALUE;
     WIN32_FIND_DATAW findFileData;
-    PWCHAR subPath = NULL;
     PWCHAR searchPath = NULL;
+    SIZE_T rootLength = 0;
+    BOOL hasTrailingSeparator = FALSE;
 
-    /*
-     * Check validity of passed arguments.
-     */
+    //
+    // Check the validity of passed arguments.
+    //
     if (RootDirectoryPath == NULL) {
         RevLogError("Invalid parameter/-s.");
         status = FALSE;
         goto Exit;
     }
 
-    /*
-     * Each directory path should indicate that we are examining all files.
-     * Check if the passed RootDirectoryPath already includes the wildcard (*).
-     */
-    if (wcsstr(RootDirectoryPath, ASTERISK) == NULL) {
-        /*
-         * If no, append a wildcard character to the root path.
-         */
-        searchPath = RevStringAppend(RootDirectoryPath,
-                                     ASTERISK);
+    //
+    // RootDirectoryPath is expected to be a plain directory path without
+    // wildcard characters to keep path handling more predictable.
+    //
+    if (wcschr(RootDirectoryPath, L'*') != NULL) {
+
+        RevLogError("The root directory path \"%ls\" must not contain "
+                    "wildcard characters.",
+                    RootDirectoryPath);
+        status = FALSE;
+        goto Exit;
+    }
+
+    rootLength = wcslen(RootDirectoryPath);
+
+    if (rootLength == 0) {
+        RevLogError("Root directory path is empty.");
+        status = FALSE;
+        goto Exit;
+    }
+
+    //
+    // Determine whether the root directory path already has a trailing
+    // path separator.
+    //
+    {
+        WCHAR lastChar = RootDirectoryPath[rootLength - 1];
+        hasTrailingSeparator = (lastChar == L'\\' || lastChar == L'/');
+    }
+
+    //
+    // Build the search path used by FindFirstFileW / FindNextFileW.
+    // Examples:
+    //   "C:\\src"   -> "C:\\src\\*"
+    //   "C:\\src\\" -> "C:\\src\\*"
+    //
+    {
+        //
+        // "*" or "\\*"
+        //
+        SIZE_T extraChars;
+        if (hasTrailingSeparator) {
+            extraChars = 1;
+        } else {
+            extraChars = 2;
+        }
+        //
+        // +1 for NUL
+        //
+        SIZE_T searchLength = rootLength + extraChars + 1;
+
+        searchPath = (PWCHAR)malloc(searchLength * sizeof(WCHAR));
+
         if (searchPath == NULL) {
-            RevLogError("Failed to normalize the revision subdirectory path "
-                        "(RevStringAppend failed).");
+            RevLogError("Failed to allocate memory for search path.");
             status = FALSE;
             goto Exit;
         }
-    } else {
 
-        searchPath = _wcsdup(RootDirectoryPath);
+        wcscpy_s(searchPath, searchLength, RootDirectoryPath);
+
+        if (!hasTrailingSeparator) {
+            wcscat_s(searchPath, searchLength, L"\\");
+        }
+
+        wcscat_s(searchPath, searchLength, L"*");
     }
 
-    /*
-     * Try to find a file or subdirectory with a name that matches the pattern.
-     */
+    //
+    // Try to find a file or subdirectory with a name that matches the pattern.
+    //
     findFile = FindFirstFileW(searchPath,
                               &findFileData);
 
-    /*
-     * Free after RevStringAppend.
-     */
     free(searchPath);
     searchPath = NULL;
 
-    /*
-     * Check if FindFirstFileW failed.
-     */
     if (findFile == INVALID_HANDLE_VALUE) {
-        RevLogError("Failed to find a file named \"%ls\" to start the "
-                    "enumeration. Error: %ls",
+
+        RevLogError("Failed to start enumeration in directory \"%ls\". "
+                    "The last known error: %ls.",
                     RootDirectoryPath,
                     RevGetLastKnownWin32Error());
         status = FALSE;
@@ -2225,94 +2271,143 @@ RevEnumerateRecursively(
     }
 
     do {
+
+        PWCHAR subPath = NULL;
+
+        //
+        // Skip the current directory (".") and parent directory ("..").
+        //
         if (wcscmp(findFileData.cFileName, L".") == 0 ||
             wcscmp(findFileData.cFileName, L"..") == 0) {
 
-            /*
-             * We want to skip one dot (for the current location) and
-             * two dots (for the parent directory).
-             */
             continue;
         }
 
-        /* Build the new subpath: combine RootDirectoryPath, L"\\" and
-           file name. */
-        PWCHAR temp = RevStringAppend(RootDirectoryPath, L"\\");
-        if (temp == NULL) {
-            RevLogError("Failed to append backslash.");
-            status = FALSE;
-            break;
+        //
+        // Build the full path for the current entry:
+        //   RootDirectoryPath [\\] FileName
+        //
+        {
+            SIZE_T nameLength = wcslen(findFileData.cFileName);
+            SIZE_T separatorChars;
+
+            if (hasTrailingSeparator) {
+                separatorChars = 0;
+            } else {
+                separatorChars = 1;
+            }
+
+            //
+            // +1 for NUL
+            //
+            SIZE_T subPathLength = rootLength + separatorChars + nameLength + 1;
+
+            subPath = (PWCHAR)malloc(subPathLength * sizeof(WCHAR));
+
+            if (subPath == NULL) {
+                RevLogError("Failed to allocate memory for subpath.");
+                status = FALSE;
+                break;
+            }
+
+            wcscpy_s(subPath, subPathLength, RootDirectoryPath);
+
+            if (!hasTrailingSeparator) {
+                wcscat_s(subPath, subPathLength, L"\\");
+            }
+
+            wcscat_s(subPath, subPathLength, findFileData.cFileName);
         }
-        subPath = RevStringAppend(temp, findFileData.cFileName);
 
-        free(temp);
-
-        if (subPath == NULL) {
-            RevLogError("Failed to normalize the revision subdirectory path "
-                        "(RevStringAppend failed).");
-            status = FALSE;
-            break;
-        }
-
-        /*
-         * Check if found a subdirectory.
-         */
+        //
+        // Check if a directory was found.
+        //
         if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
 
-            /* Skip reparse points to avoid infinite loops. */
+            //
+            // Skip reparse points to avoid infinite loops.
+            //
             if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
                 RevLogWarning("Skipping reparse point: %ls", subPath);
                 free(subPath);
                 continue;
             }
 
-            /* For directories, duplicate the subPath so that recursive call
-               owns its copy. */
-            PWCHAR subPathCopy = _wcsdup(subPath);
-            free(subPath);
-            subPath = NULL;
+            //
+            // Recursively traverse a subdirectory. Pass a duplicate of the
+            // path so that the callee owns and may free its buffer without
+            // affecting the caller.
+            //
+            {
+                PWCHAR subPathCopy = _wcsdup(subPath);
+                free(subPath);
+                subPath = NULL;
 
-            /*
-             * Recursively traverse a subdirectory.
-             */
-            if (!RevEnumerateRecursively(subPathCopy)) {
-                RevLogError("Recursive subdirectory traversal failed.");
-                status = FALSE;
-                break;
+                if (subPathCopy == NULL) {
+                    RevLogError("Failed to duplicate subdirectory path.");
+                    status = FALSE;
+                    break;
+                }
+
+                if (!RevEnumerateRecursively(subPathCopy)) {
+                    RevLogError("Recursive subdirectory traversal failed for "
+                                "\"%ls\".",
+                                subPathCopy);
+                    status = FALSE;
+                }
+
+                free(subPathCopy);
+
+                if (!status) {
+                    break;
+                }
             }
+
         } else {
 
-            /*
-             * If found a file, check if the file should be revised, and if so,
-             * revise it.
-             *
-             * The revision should be performed only if the file extension has
-             * been recognized. For this purpose it is enough to pass only the
-             * file name (findFileData.cFileName), but for file revision the
-             * full path (subdirectoryPath) is required.
-             */
+            //
+            // A regular file was found. If the file extension is recognized,
+            // revise the file; otherwise, count it as ignored.
+            //
             if (RevShouldReviseFile(findFileData.cFileName)) {
+
                 if (!RevReviseFile(subPath)) {
                     RevLogError("RevReviseFile failed to revise file \"%ls\".",
                                 subPath);
+                    //
+                    // Do not treat this as a fatal error for enumeration.
+                    // Continue with other files.
+                    //
                 }
 
                 free(subPath);
 
             } else {
 
-                /* Increment the total count of ignored files. */
                 Revision->CountOfIgnoredFiles += 1;
-
                 free(subPath);
             }
         }
 
     } while (FindNextFileW(findFile, &findFileData) != 0);
 
-    FindClose(findFile);
+    //
+    // If FindNextFileW failed for a reason other than "no more files",
+    // treat it as an error.
+    //
+    if (GetLastError() != ERROR_NO_MORE_FILES) {
+        RevLogError("FindNextFileW failed while enumerating directory \"%ls\". "
+                    "The last known error: %ls.",
+                    RootDirectoryPath,
+                    RevGetLastKnownWin32Error());
+        status = FALSE;
+    }
 
 Exit:
+
+    if (findFile != INVALID_HANDLE_VALUE) {
+        FindClose(findFile);
+    }
 
     return status;
 }
@@ -2411,7 +2506,7 @@ RevCountLinesCStyle(
         CHAR currentChar = Buffer[index];
         CHAR nextChar;
 
-        if ((index + 1 < Length)) {
+        if (index + 1 < Length) {
             nextChar = Buffer[index + 1];
         } else {
             nextChar = 0;
@@ -2643,7 +2738,13 @@ RevCountLinesLineCommentStyle(
     for (index = 0; index < Length; index += 1) {
 
         CHAR currentChar = Buffer[index];
-        CHAR nextChar = (index + 1 < Length) ? Buffer[index + 1] : 0;
+        CHAR nextChar;
+
+        if (index + 1 < Length) {
+            nextChar = Buffer[index + 1];
+        } else {
+            nextChar = 0;
+        }
 
         //
         // Handle CR and LF as line terminators, merge CRLF into a single
