@@ -47,54 +47,54 @@ Abstract:
 //
 
 /**
- * @brief This structure stores the initialization parameters of the
+ * This structure stores the initialization parameters of the
  * revision provided by the user at launch.
  */
 typedef struct REVISION_INIT_PARAMS {
     /**
-     * @brief Path to the revision root directory.
+     * Path to the revision root directory.
      */
     _Field_z_ PWCHAR RootDirectory;
 
     /**
-     * @brief Indicates whether verbose revision mode is active.
+     * Indicates whether verbose revision mode is active.
      */
     BOOL IsVerboseMode;
 } REVISION_INIT_PARAMS, *PREVISION_INIT_PARAMS;
 
 /**
- * @brief This enumeration defines the types of file extensions
+ * his enumeration defines the types of file extensions
  * (to be used in REVISION_RECORD_EXTENSION_MAPPING).
  */
 typedef enum REVISION_RECORD_EXTENSION_TYPE {
     /**
-     * @brief File extension with a single dot, e.g. ".txt".
+     * File extension with a single dot, e.g. ".txt".
      */
     SingleDot,
 
     /**
-     * @brief File extension with multiple dots, e.g. ".CMakeLists.txt".
+     * File extension with multiple dots, e.g. ".CMakeLists.txt".
      */
     MultiDot
 } REVISION_RECORD_EXTENSION_TYPE;
 
 /**
- * @brief This structure stores the mapping of file extensions to
+ * This structure stores the mapping of file extensions to
  * programming languages.
  */
 typedef struct REVISION_RECORD_EXTENSION_MAPPING {
     /**
-     * @brief File extension.
+     * File extension.
      */
     _Field_z_ PWCHAR Extension;
 
     /**
-     * @brief Programming language or file type.
+     * Programming language or file type.
      */
     _Field_z_ PWCHAR LanguageOrFileType;
 
     /**
-     * @brief Extension type which indicates whether the extension is a
+     * Extension type which indicates whether the extension is a
      * single-dot or multi-dot extension.
      */
     /* TODO: Temporarily disabled. Re-evaluate the approach.
@@ -102,74 +102,92 @@ typedef struct REVISION_RECORD_EXTENSION_MAPPING {
 } REVISION_RECORD_EXTENSION_MAPPING, *PREVISION_RECORD_EXTENSION_MAPPING;
 
 /**
- * @brief This structure stores statistics for some specific file
- * extension.
+ * This structure stores statistics for some specific file extension.
  */
 typedef struct REVISION_RECORD {
     /**
-     * @brief Linked list entry.
+     * Linked list entry.
      */
     LIST_ENTRY ListEntry;
 
     /**
-     * @brief Extension of the revision record file and recognized
+     * Extension of the revision record file and recognized
      * programming language/file type based on extension.
      */
     REVISION_RECORD_EXTENSION_MAPPING ExtensionMapping;
 
     /**
-     * @brief Number of lines in the revision record.
+     * Number of lines in the revision record.
      */
     ULONGLONG CountOfLinesTotal;
 
     /**
-     * @brief Number of blank lines in the revision record.
+     * Number of blank lines in the revision record.
      */
     ULONGLONG CountOfLinesBlank;
 
     /**
-     * @brief Number of files in the revision record.
+     * Number of comment lines in the revision record.
+     */
+    ULONGLONG CountOfLinesComment;
+
+    /**
+     * Number of files in the revision record.
      */
     ULONG CountOfFiles;
 } REVISION_RECORD, *PREVISION_RECORD;
 
 /**
- * @brief This structure stores the statistics of the entire revision.
+ * This structure stores the statistics of the entire revision.
  */
 typedef struct REVISION {
     /**
-     * @brief Revision initialization parameters provided by the user.
+     * Revision initialization parameters provided by the user.
      */
     REVISION_INIT_PARAMS InitParams;
 
     /**
-     * @brief List of revision records.
+     * List of revision records.
      */
     LIST_ENTRY RevisionRecordListHead;
 
     /**
-     * @brief Number of lines in the whole project.
+     * Number of lines in the whole project.
      */
     ULONGLONG CountOfLinesTotal;
 
     /**
-     * @brief Number of blank lines in the whole project.
+     * Number of blank lines in the whole project.
      */
     ULONGLONG CountOfLinesBlank;
 
     /**
-     * @brief Number of files in the whole project.
+     * Number of comment lines in the whole project.
+     */
+    ULONGLONG CountOfLinesComment;
+
+    /**
+     * Number of files in the whole project.
      */
     ULONG CountOfFiles;
 
     /**
-     * @brief Number of ignored files during the revision.
+     * Number of ignored files during the revision.
      */
     ULONG CountOfIgnoredFiles;
 } REVISION, *PREVISION;
 
 /**
- * @brief This enumeration represents different console text colors.
+ * This helper structure is a generic line stats.
+ */
+typedef struct LINE_STATS {
+    ULONGLONG Total;
+    ULONGLONG Blank;
+    ULONGLONG Comment;
+} LINE_STATS, *PLINE_STATS;
+
+/**
+ * This enumeration represents different console text colors.
  */
 typedef enum CONSOLE_FOREGROUND_COLOR {
     Red,
@@ -249,6 +267,9 @@ const PWCHAR ConsoleForegroundColors[] = {
  * TODO: Multi-dot extensions are commented out, we need to add support
  *       for them. The current algorithm counts everything after the last
  *       dot as an extension.
+ *
+ * TODO: Sort the table by extension and use binary search.
+ *       Or build a hash table on first use and look up in O(1).
  */
 REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".abap",               L"ABAP"},
@@ -2080,6 +2101,194 @@ RevShouldReviseFile(
     return FALSE;
 }
 
+static
+VOID
+RevCountLinesCStyle(
+    const PCHAR Buffer,
+    SIZE_T Length,
+    PLINE_STATS LineStats
+)
+{
+    BOOL inBlockComment = FALSE;
+    BOOL inString = FALSE;
+    CHAR stringDelim = 0;
+    BOOL sawCode = FALSE;
+    BOOL sawComment = FALSE;
+    BOOL sawNonWs = FALSE;
+    BOOL prevWasCR = FALSE;
+    SIZE_T i;
+    CHAR c;
+    CHAR next;
+
+    for (i = 0; i < Length; ++i) {
+
+        c = Buffer[i];
+
+        if (i + 1 < Length) {
+            next = Buffer[i + 1];
+        } else {
+            next = 0;
+        }
+
+        //
+        // Handle CRLF as a single new line.
+        //
+        if (c == '\r' || c == '\n') {
+
+            if (prevWasCR && c == '\n') {
+                //
+                // Already counted at CR, skip LF.
+                //
+                prevWasCR = FALSE;
+                continue;
+            }
+
+            //
+            // Classify the current line.
+            //
+            LineStats->Total += 1;
+
+            if (!sawNonWs) {
+                LineStats->Blank += 1;
+            } else if (sawCode) {
+                //
+                // Code wins over comment on mixed lines.
+                //
+            } else if (sawComment) {
+                LineStats->Comment += 1;
+            } else {
+                //
+                // sawNonWs but neither code nor comment? Treat as code.
+                //
+            }
+
+            //
+            // Reset per-line state.
+            //
+            sawCode = FALSE;
+            sawComment = FALSE;
+            sawNonWs = FALSE;
+
+            if (c == '\r') {
+                prevWasCR = TRUE;
+            } else {
+                prevWasCR = FALSE;
+            }
+
+            continue;
+        }
+
+        prevWasCR = FALSE;
+
+        if (!isspace((UCHAR) c)) {
+            sawNonWs = TRUE;
+        }
+
+        //
+        // Inside block comment?
+        //
+        if (inBlockComment) {
+            sawComment = TRUE;
+
+            if (c == '*' && next == '/') {
+                //
+                // Consume '/'
+                //
+                inBlockComment = FALSE;
+                i += 1;
+            }
+
+            //
+            // Everything else within the block comment is ignored
+            // for code purposes.
+            //
+            continue;
+        }
+
+        //
+        // Inside string literal?
+        //
+        if (inString) {
+            if (c == '\\' && next != 0) {
+                //
+                // Escape sequence, skip next char.
+                //
+                i += 1;
+            } else if (c == stringDelim) {
+                inString = FALSE;
+            }
+
+            //
+            // String content counts as code.
+            //
+            sawCode = TRUE;
+            continue;
+        }
+
+        //
+        // Outside comments & strings.
+        //
+
+        //
+        // Start of line comment "//"
+        //
+        if (c == '/' && next == '/') {
+            sawComment = TRUE;
+            //
+            // Rest of line is comment; we just ignore characters until newline.
+            //
+            break;
+        }
+
+        //
+        // start of block comment "/*"
+        //
+        if (c == '/' && next == '*') {
+            //
+            // Consume '*'
+            //
+            inBlockComment = TRUE;
+            sawComment = TRUE;
+            i += 1;
+            continue;
+        }
+
+        //
+        // Start of string literal.
+        //
+        if (c == '"' || c == '\'') {
+            inString = TRUE;
+            stringDelim = c;
+            sawCode = TRUE;
+            continue;
+        }
+
+        //
+        // Any other non-whitespace outside comment/string is code.
+        //
+        if (!isspace((UCHAR) c)) {
+            sawCode = TRUE;
+        }
+    }
+
+    //
+    // Final line (if the file doesn't end with a newline).
+    //
+    if (sawNonWs || sawComment || sawCode || inBlockComment) {
+        LineStats->Total += 1;
+
+        if (!sawNonWs && !sawComment && !inBlockComment) {
+            LineStats->Blank += 1;
+        } else if (sawCode) {
+            //
+            // Code line.
+            //
+        } else {
+            LineStats->Comment += 1;
+        }
+    }
+}
+
 _Must_inspect_result_
 BOOL
 RevReviseFile(
@@ -2088,21 +2297,17 @@ RevReviseFile(
 {
     BOOL status = TRUE;
     PREVISION_RECORD revisionRecord = NULL;
-    ULONGLONG lineCountTotal = 0;
-    ULONGLONG lineCountBlank = 0;
-    PCHAR fileBuffer = NULL;
-    DWORD fileBufferSize = 0;
-    PWCHAR fileExtension = NULL;
+    LINE_STATS stats = {0};
     HANDLE file = INVALID_HANDLE_VALUE;
     LARGE_INTEGER fileSize;
+    PCHAR fileBuffer = NULL;
+    DWORD fileBufferSize = 0;
     DWORD bytesRead = 0;
-    DWORD index = 0;
-    BOOL isBlankLine = TRUE;
-    BOOL previousWasCR = FALSE;
+    PWCHAR fileExtension = NULL;
 
-    /*
-     * Attempt to open the file.
-     */
+    //
+    // Attempt to open the file.
+    //
     file = CreateFile(FilePath,
                       GENERIC_READ,
                       FILE_SHARE_READ,
@@ -2118,9 +2323,9 @@ RevReviseFile(
         goto Exit;
     }
 
-    /*
-     * Retrieve the size of the file
-     */
+    //
+    // Retrieve the size of the file
+    //
     if (!GetFileSizeEx(file, &fileSize)) {
         RevLogError("Failed to retrieve the size of the file \"%ls\". "
                     "The last known error: %ls.",
@@ -2130,20 +2335,16 @@ RevReviseFile(
         goto Exit;
     }
 
-    /* Empty file, nothing to count. */
+    //
+    // Empty file, nothing to count.
+    //
     if (fileSize.QuadPart == 0) {
-        goto Exit;
+        goto UpdateStats;
     }
 
-    /*
-     * Allocate buffer for the entire file.
-     * N.B. Currently, reading only ANSI files is supported, so the read buffer
-     * is allocated with a size that takes sizeof(CHAR) into account.
-     * It is assumed that most source code files do not use utf-16 encoding, but
-     * support for encoding detection should be added in the future.
-     * TODO: Check that file size is not too huge (prevent DWORD overflow):
-     *       `if (fileSize.QuadPart > (SIZE_MAX / sizeof(CHAR))) {} else {}`
-     */
+    //
+    // TODO: Simple implementation limit; could be improved with chunked reading
+    //
     if (fileSize.QuadPart > MAXDWORD) {
         RevLogError("File \"%ls\" is too large (%lld bytes) "
                     "for single-buffer read.",
@@ -2153,9 +2354,9 @@ RevReviseFile(
         goto Exit;
     }
 
-    fileBufferSize = (DWORD)fileSize.QuadPart;
+    fileBufferSize = (DWORD) fileSize.QuadPart;
 
-    fileBuffer = (PCHAR)malloc(fileBufferSize);
+    fileBuffer = (PCHAR) malloc(fileBufferSize);
     if (fileBuffer == NULL) {
         RevLogError("Failed to allocate %llu bytes for file buffer",
                     fileSize.QuadPart * sizeof(CHAR));
@@ -2163,9 +2364,9 @@ RevReviseFile(
         goto Exit;
     }
 
-    /*
-     * Read entire file contents into buffer.
-     */
+    //
+    // Read entire file contents into buffer.
+    //
     if (!ReadFile(file,
                   fileBuffer,
                   fileBufferSize,
@@ -2178,66 +2379,24 @@ RevReviseFile(
         goto Exit;
     }
 
-    /*
-     * Process each character in the file buffer to count lines.
-     * The logic correctly handles CR, LF, and CRLF sequences:
-     *   - CRLF sequences are treated as a single newline.
-     *   - Every newline encountered increments the line count,
-     *     and if the line contained only whitespace, it is counted as blank.
-     */
-    for (index = 0; index < bytesRead; index += 1) {
-
-        const CHAR currentChar = fileBuffer[index];
-
-        /*
-         * If the previous character was a CR and the current character is LF,
-         * skip this LF to prevent double-counting a CRLF as two newlines.
-         */
-        if (previousWasCR && currentChar == LINE_FEED) {
-            previousWasCR = FALSE;
-            continue;
-        }
-
-        if (currentChar == CARRIAGE_RETURN || currentChar == LINE_FEED) {
-
-            lineCountTotal += 1;
-            if (isBlankLine) {
-                lineCountBlank += 1;
-            }
-
-            /*
-             * Reset state for new line.
-             */
-            isBlankLine = TRUE;
-            previousWasCR = (currentChar == CARRIAGE_RETURN);
-
-        } else {
-
-            /*
-             * For any non-newline character, update the blank line flag if
-             * the character is not whitespace.
-             */
-            if (!isspace((UCHAR)currentChar)) {
-                isBlankLine = FALSE;
-            }
-            previousWasCR = FALSE;
-        }
+    if (bytesRead == 0) {
+        //
+        // nothing read, treat as emptyю
+        //
+        goto UpdateStats;
     }
 
-    /*
-     * Even if the file ends with a newline, that newline indicates an extra
-     * (blank) line that should be counted.
-     */
-    if (bytesRead > 0) {
-        lineCountTotal += 1;
-        if (isBlankLine) {
-            lineCountBlank += 1;
-        }
-    }
+    //
+    // Now decide which classifier to use.
+    // For now, assume C-style comments for everything.
+    //
+    RevCountLinesCStyle(fileBuffer, bytesRead, &stats);
 
-    /*
-     * Find the file extension.
-     */
+UpdateStats:
+
+    //
+    // Determine the file extension.
+    //
     fileExtension = wcsrchr(FilePath, L'.');
     if (fileExtension == NULL) {
         RevLogError("Failed to determine the extension for the file \"%ls\".",
@@ -2246,11 +2405,11 @@ RevReviseFile(
         goto Exit;
     }
 
-    /*
-     * If there is a revision record for that language/file type in the revision
-     * record list, we'll update it. If this file type hasn't been encountered,
-     * we create a new node for it in the list.
-     */
+    //
+    // If there is a revision record for that language/file type in the revision
+    // record list, we'll update it. If this file type hasn't been encountered,
+    // we create a new node for it in the list.
+    //
     revisionRecord = RevFindRevisionRecordForLanguageByExtension(fileExtension);
     if (revisionRecord == NULL) {
         RevLogError("Failed to find/initialize the revision record for the file"
@@ -2260,18 +2419,20 @@ RevReviseFile(
         goto Exit;
     }
 
-    /*
-     * Update the count of lines for the extension.
-     */
-    revisionRecord->CountOfLinesTotal += lineCountTotal;
-    revisionRecord->CountOfLinesBlank += lineCountBlank;
+    //
+    // Update per-extension stats.
+    //
+    revisionRecord->CountOfLinesTotal += stats.Total;
+    revisionRecord->CountOfLinesBlank += stats.Blank;
+    revisionRecord->CountOfLinesComment += stats.Comment;
     revisionRecord->CountOfFiles += 1;
 
-    /*
-     * Update the count of lines for the revision.
-     */
-    Revision->CountOfLinesTotal += lineCountTotal;
-    Revision->CountOfLinesBlank += lineCountBlank;
+    //
+    // Update global stats.
+    //
+    Revision->CountOfLinesTotal += stats.Total;
+    Revision->CountOfLinesBlank += stats.Blank;
+    Revision->CountOfLinesComment += stats.Comment;
     Revision->CountOfFiles += 1;
 
 Exit:
@@ -2283,9 +2444,9 @@ Exit:
         free(fileBuffer);
     }
 
-    /*
-     * N.B. Don't free FilePath here, it's managed by the caller.
-     */
+    //
+    // N.B. Don't free FilePath here, it's managed by the caller.
+    //
 
     return status;
 }
