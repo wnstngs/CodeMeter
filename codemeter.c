@@ -2464,10 +2464,11 @@ RevOutputRevisionStatistics(
      */
     RevPrint(L"----------------------------------------------------------------"
              "------------------\n");
-    RevPrint(L"%-25s%10s%22s%25s\n",
+    RevPrint(L"%-25s%10s%15s%15s%15s\n",
              L"File Type",
              L"Files",
              L"Blank",
+             L"Comment",
              L"Total");
     RevPrint(L"----------------------------------------------------------------"
              "------------------\n");
@@ -2482,10 +2483,11 @@ RevOutputRevisionStatistics(
 
         revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
         if (revisionRecord) {
-            RevPrint(L"%-25s%10u%22u%25u\n",
+            RevPrint(L"%-25s%10u%15llu%15llu%15llu\n",
                      revisionRecord->ExtensionMapping.LanguageOrFileType,
                      revisionRecord->CountOfFiles,
                      revisionRecord->CountOfLinesBlank,
+                     revisionRecord->CountOfLinesComment,
                      revisionRecord->CountOfLinesTotal);
         }
     }
@@ -2495,10 +2497,11 @@ RevOutputRevisionStatistics(
      */
     RevPrint(L"----------------------------------------------------------------"
              "------------------\n");
-    RevPrint(L"%-25s%10u%22u%25u\n",
+    RevPrint(L"%-25s%10s%15s%15s%15s\n",
              L"Total:",
              Revision->CountOfFiles,
              Revision->CountOfLinesBlank,
+             Revision->CountOfLinesComment,
              Revision->CountOfLinesTotal);
     RevPrint(L"----------------------------------------------------------------"
              "------------------\n");
