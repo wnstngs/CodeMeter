@@ -1510,7 +1510,7 @@ RevPrintEx(
  */
 #define RevLogError(Message, ...)                                                       \
     do {                                                                                \
-        if (Revision && Revision->InitParams.IsVerboseMode) {                           \
+        if (!Revision || Revision->InitParams.IsVerboseMode) {                          \
             fprintf(stderr,                                                             \
                     SupportAnsi ?                                                       \
                         "\033[0;31m[ERROR]\n└───> (in %s@%d): " Message "\033[0m\n" :   \
@@ -1533,7 +1533,7 @@ RevPrintEx(
  */
 #define RevLogWarning(Message, ...)                                                     \
     do {                                                                                \
-        if (Revision && Revision->InitParams.IsVerboseMode) {                           \
+        if (!Revision || Revision->InitParams.IsVerboseMode) {                          \
             fprintf(stdout,                                                             \
                     SupportAnsi ?                                                       \
                         "\033[0;33m[WARNING]\n└───> (in %s@%d): " Message "\033[0m\n" : \
