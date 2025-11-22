@@ -1551,52 +1551,32 @@ RevGetLastKnownWin32Error(
     VOID
     )
 {
-    PWCHAR messageBuffer;
-    SIZE_T messageBufferSize;
-    DWORD formatResult;
+    static WCHAR messageBuffer[256];
+    DWORD formatResult = {0};
     const DWORD lastKnownError = GetLastError();
 
     /*
-     * Attempt to format the error code into a human-readable string.
+     * Format the error code into a human-readable string.
      */
-    formatResult = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER |
-                                  FORMAT_MESSAGE_FROM_SYSTEM,
+    formatResult = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM |
+                                  FORMAT_MESSAGE_IGNORE_INSERTS,
                                   NULL,
                                   lastKnownError,
                                   0,
                                   (LPWSTR)&messageBuffer,
-                                  0,
+                                  ARRAYSIZE(messageBuffer),
                                   NULL);
 
     if (formatResult == 0) {
         /*
-         * If FormatMessageW failed, convert the error code to a string
-         * and return that.
+         * If FormatMessageW failed, convert the error code to a string.
          */
-
-        /* N.B. The maximum error code value is a 5-digit number (15999). */
-        messageBufferSize = (5 + 1) * sizeof(WCHAR);
-        messageBuffer = (PWCHAR) malloc(messageBufferSize);
-        if (messageBuffer == NULL) {
-            RevLogError("Failed to allocate a message buffer (%llu bytes).",
-                        messageBufferSize);
-            goto Exit;
-        }
-
-        if (swprintf_s(messageBuffer,
-                       (5 + 1),
-                       L"%lu",
-                       lastKnownError) == -1) {
-            RevLogError("Failed to write formatted data to a string.");
-            if (messageBuffer) {
-                free(messageBuffer);
-            }
-            messageBuffer = NULL;
-            goto Exit;
-        }
+        _snwprintf_s(messageBuffer,
+                     ARRAYSIZE(messageBuffer),
+                     _TRUNCATE,
+                     L"%lu",
+                     lastKnownError);
     }
-
-Exit:
 
     return messageBuffer;
 }
