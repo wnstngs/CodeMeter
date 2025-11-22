@@ -102,7 +102,10 @@ typedef struct REVISION_RECORD_EXTENSION_MAPPING {
 } REVISION_RECORD_EXTENSION_MAPPING, *PREVISION_RECORD_EXTENSION_MAPPING;
 
 /**
- * This structure stores statistics for some specific file extension.
+ * @brief This structure stores the statistics for a single revision record.
+ *
+ * A revision record represents a group of files with the same extension or
+ * language mapping.
  */
 typedef struct REVISION_RECORD {
     /**
@@ -178,13 +181,45 @@ typedef struct REVISION {
 } REVISION, *PREVISION;
 
 /**
- * This helper structure is a generic line stats.
+ * This structure holds per-file line statistics.
  */
 typedef struct LINE_STATS {
-    ULONGLONG Total;
-    ULONGLONG Blank;
-    ULONGLONG Comment;
+    /**
+     * Total number of lines.
+     */
+    ULONGLONG CountOfLinesTotal;
+
+    /**
+     * Number of blank lines.
+     */
+    ULONGLONG CountOfLinesBlank;
+
+    /**
+     * Number of comment-only lines.
+     */
+    ULONGLONG CountOfLinesComment;
 } LINE_STATS, *PLINE_STATS;
+
+/**
+ * This enumeration represents logical "language families" used for
+ * comment parsing.
+ */
+typedef enum REV_LANGUAGE_FAMILY {
+    RevLanguageFamilyUnknown = 0,
+    RevLanguageFamilyCStyle,     /* // and /* ... *\/ style */
+    RevLanguageFamilyHashStyle,  /* # ... */
+    RevLanguageFamilyDoubleDash, /* -- ... (SQL, Haskell, etc.) */
+    RevLanguageFamilySemicolon,  /* ; ... (some Lisps, assembly) */
+    RevLanguageFamilyMax
+} REV_LANGUAGE_FAMILY;
+
+/**
+ * This structure maps a language name substring to a language family.
+ */
+typedef struct LANGUAGE_FAMILY_MAPPING {
+    _Field_z_ PWCHAR LanguageSubstring;
+    REV_LANGUAGE_FAMILY LanguageFamily;
+} LANGUAGE_FAMILY_MAPPING, *PLANGUAGE_FAMILY_MAPPING;
 
 /**
  * This enumeration represents different console text colors.
@@ -201,6 +236,8 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
 //
 // ------------------------------------------------------- Constants and Globals
 //
+
+#define REV_EXTENSION_HASH_BUCKET_COUNT 1024u
 
 /**
  * @brief The string to be prepended to a path to avoid the MAX_PATH
@@ -258,6 +295,30 @@ const PWCHAR ConsoleForegroundColors[] = {
 
     /* Cyan */
     L"\x1b[36m"
+};
+
+// @formatter:off
+
+/*
+ * N.B. This table is intentionally small and data-driven.
+ * Anything that does not match here is treated as C-style by default.
+ */
+LANGUAGE_FAMILY_MAPPING LanguageFamilyMappingTable[] = {
+    {L"Python",         RevLanguageFamilyHashStyle},
+    {L"Ruby",           RevLanguageFamilyHashStyle},
+    {L"Perl",           RevLanguageFamilyHashStyle},
+    {L"Shell",          RevLanguageFamilyHashStyle},
+    {L"bash",           RevLanguageFamilyHashStyle},
+    {L"make",           RevLanguageFamilyHashStyle},
+    {L"Make",           RevLanguageFamilyHashStyle},
+    {L"PowerShell",     RevLanguageFamilyHashStyle},
+    {L"Raku",           RevLanguageFamilyHashStyle},
+    {L"awk",            RevLanguageFamilyHashStyle},
+    {L"SQL",            RevLanguageFamilyDoubleDash},
+    {L"Haskell",        RevLanguageFamilyDoubleDash},
+    {L"Lisp",           RevLanguageFamilySemicolon},
+    {L"Scheme",         RevLanguageFamilySemicolon},
+    {L"Assembly",       RevLanguageFamilySemicolon},
 };
 
 /**
@@ -1212,6 +1273,20 @@ REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".zsh",                L"zsh"},
 };
 
+//@formatter:on
+
+/**
+ * @brief Simple open-addressing hash table over ExtensionMappingTable.
+ *
+ * This table is derived from ExtensionMappingTable at runtime and used
+ * to speed up extension lookups.
+ */
+const REVISION_RECORD_EXTENSION_MAPPING *RevExtensionHashTable[
+    REV_EXTENSION_HASH_BUCKET_COUNT
+];
+
+BOOL RevExtensionHashTableInitialized = FALSE;
+
 /**
  * @brief The global revision state used throughout the entire program
  * run-time.
@@ -1227,13 +1302,6 @@ BOOL SupportAnsi;
 // ------------------------------------------------ Internal Function Prototypes
 //
 
-/**
- * @brief This function retrieves the calling thread's last-error code
- * value and translates it into its corresponding error message.
- *
- * @return A pointer to the error message string on success,
- * or NULL on failure.
- */
 _Ret_maybenull_
 _Must_inspect_result_
 PWCHAR
@@ -1241,19 +1309,6 @@ RevGetLastKnownWin32Error(
     VOID
     );
 
-/**
- * @brief This function appends one unicode string to another and returns
- * the result.
- *
- * @param String1 The first string (to which String2 will be appended).
- *
- * @param String2 The second string (to be appended to String1).
- *
- * @return A new string containing the concatenation of String1 and
- * String2. NULL if the function failed.
- *
- * @remarks The caller is responsible for freeing the memory.
- */
 _Ret_maybenull_
 _Must_inspect_result_
 PWCHAR
@@ -1262,19 +1317,6 @@ RevStringAppend(
     _In_z_ PWCHAR String2
     );
 
-/**
- * @brief This function prepends one unicode string to another and
- * returns the result.
- *
- * @param String1 Supplies the first string (to be appended to).
- *
- * @param String2 Supplies the second string (to be prepended).
- *
- * @return A new string containing the concatenation of String1 and
- * String2. NULL if the function failed.
- *
- * @remarks N.B. The caller is responsible for freeing the memory.
- */
 _Ret_maybenull_
 _Must_inspect_result_
 PWCHAR
@@ -1283,44 +1325,28 @@ RevStringPrepend(
     _In_z_ PWCHAR String2
     );
 
-/**
- * @brief This function is responsible for initializing the revision
- * system.
- *
- * @param InitParams Supplies the revision initialization parameters.
- *
- * @return TRUE if succeeded, FALSE if failed.
- */
+ULONG
+RevHashExtensionKey(
+    _In_z_ PWCHAR Extension
+    );
+
+VOID
+RevInitializeExtensionHashTable(
+    VOID
+    );
+
 _Must_inspect_result_
 BOOL
 RevInitializeRevision(
     _In_ PREVISION_INIT_PARAMS InitParams
     );
 
-/**
- * @brief This function is responsible for starting the revision system.
- * It ensures that the system has been initialized correctly before
- * proceeding with its operations.
- *
- * @return TRUE if succeeded, FALSE if failed.
- */
 _Must_inspect_result_
 BOOL
 RevStartRevision(
     VOID
     );
 
-/**
- * @brief This function initializes a REVISION_RECORD structure.
- *
- * @param Extension Supplies the file extension of the revision record.
- *
- * @param LanguageOrFileType Supplies the language or file type of the
- * revision record.
- *
- * @return If the initialization is successful, returns a pointer to the
- * new revision record; otherwise, NULL.
- */
 _Ret_maybenull_
 _Must_inspect_result_
 PREVISION_RECORD
@@ -1329,48 +1355,23 @@ RevInitializeRevisionRecord(
     _In_z_ PWCHAR LanguageOrFileType
     );
 
-/**
- * @brief This function is designed to recursively traverse and enumerate
- * files and subdirectories within a given root directory path.
- *
- * @param RootDirectoryPath Supplies the root directory path from which
- * enumeration should begin.
- *
- * @return TRUE if succeeded, FALSE if failed.
- */
+REV_LANGUAGE_FAMILY
+RevGetLanguageFamily(
+    _In_z_ PWCHAR LanguageOrFileType
+    );
+
 _Must_inspect_result_
 BOOL
 RevEnumerateRecursively(
     _In_z_ PWCHAR RootDirectoryPath
     );
 
-/**
- * This function searches a table of file extension-to-language mappings
- * to find the programming language associated with the provided file
- * extension.
- *
- * @param Extension Supplies the file extension.
- *
- * @return If a matching file extension is found in the mapping table,
- * the function returns the associated programming language as a string.
- * If no match is found, the function returns NULL.
- */
 _Ret_maybenull_
 PWCHAR
 RevMapExtensionToLanguage(
     _In_z_ PWCHAR Extension
     );
 
-/**
- * @brief This function checks if a REVISION_RECORD for a language/file
- * type with a given extension exists in the global revision's list of
- * revision records.
- *
- * @param Extension Supplies the file extension to search for.
- *
- * @return If a matching REVISION_RECORD is found, returns a pointer to
- * that record; otherwise, returns NULL.
- */
 _Ret_maybenull_
 _Must_inspect_result_
 PREVISION_RECORD
@@ -1378,35 +1379,40 @@ RevFindRevisionRecordForLanguageByExtension(
     _In_z_ PWCHAR Extension
     );
 
-/**
- * @brief This function checks if a file extension is in the extension
- * table. File should be revised only if it has valid (is in the table)
- * extension.
- *
- * @param FileName Supplies the name of the file to be checked.
- *
- * @return TRUE if succeeded, FALSE if failed.
- */
+VOID
+RevCountLinesCStyle(
+    _In_reads_bytes_(Length) const CHAR *Buffer,
+    _In_ SIZE_T Length,
+    _Inout_ PLINE_STATS LineStats
+    );
+
+VOID
+RevCountLinesHashStyle(
+    _In_reads_bytes_(Length) PCHAR Buffer,
+    _In_ SIZE_T Length,
+    _Inout_ PLINE_STATS LineStats
+    );
+
+VOID
+RevCountLinesWithFamily(
+    _In_reads_bytes_(Length) PCHAR Buffer,
+    _In_ SIZE_T Length,
+    _In_ REV_LANGUAGE_FAMILY LanguageFamily,
+    _Inout_ PLINE_STATS LineStats
+    );
+
 _Must_inspect_result_
 BOOL
 RevShouldReviseFile(
     _In_z_ PWCHAR FileName
     );
 
-/**
- * @brief This function reads and revises the specified file.
- * @param FilePath Supplies the path to the file to be revised.
- * @return TRUE if succeeded, FALSE if failed.
- */
 _Must_inspect_result_
 BOOL
 RevReviseFile(
     _In_z_ PWCHAR FilePath
     );
 
-/**
- * @brief This function outputs the revision statistics to the console.
- */
 VOID
 RevOutputRevisionStatistics(
     VOID
@@ -1565,6 +1571,13 @@ RevPrintEx(
         }                                                                               \
     } while (0)
 
+/**
+ * @brief This function retrieves the calling thread's last-error code
+ * value and translates it into its corresponding error message.
+ *
+ * @return A pointer to the error message string on success,
+ * or NULL on failure.
+ */
 _Ret_maybenull_
 _Must_inspect_result_
 PWCHAR
@@ -1602,6 +1615,19 @@ RevGetLastKnownWin32Error(
     return messageBuffer;
 }
 
+/**
+ * @brief This function appends one unicode string to another and returns
+ * the result.
+ *
+ * @param String1 The first string (to which String2 will be appended).
+ *
+ * @param String2 The second string (to be appended to String1).
+ *
+ * @return A new string containing the concatenation of String1 and
+ * String2. NULL if the function failed.
+ *
+ * @remarks The caller is responsible for freeing the memory.
+ */
 _Ret_maybenull_
 _Must_inspect_result_
 PWCHAR
@@ -1654,6 +1680,19 @@ Exit:
     return result;
 }
 
+/**
+ * @brief This function prepends one unicode string to another and
+ * returns the result.
+ *
+ * @param String1 Supplies the first string (to be appended to).
+ *
+ * @param String2 Supplies the second string (to be prepended).
+ *
+ * @return A new string containing the concatenation of String1 and
+ * String2. NULL if the function failed.
+ *
+ * @remarks N.B. The caller is responsible for freeing the memory.
+ */
 _Ret_maybenull_
 _Must_inspect_result_
 PWCHAR
@@ -1712,6 +1751,101 @@ Exit:
     return result;
 }
 
+/**
+ * This function computes a hash code for an extension key using a simple
+ * FNV-1a 32-bit hash over a lower-cased extension string.
+ *
+ * @param Extension Supplies the file extension (e.g. L".c").
+ *
+ * @return A 32-bit hash value for the extension.
+ */
+ULONG
+RevHashExtensionKey(
+    _In_z_ PWCHAR Extension
+    )
+{
+    ULONG hash = 2166136261u;
+
+    if (Extension == NULL) {
+        return 0;
+    }
+
+    while (*Extension != L'\0') {
+
+        WCHAR ch = *Extension;
+
+        if (ch >= L'A' && ch <= L'Z') {
+            ch = (WCHAR)(ch - L'A' + L'a');
+        }
+
+        hash ^= (ULONG)ch;
+        hash *= 16777619u;
+
+        Extension += 1;
+    }
+
+    return hash;
+}
+
+/**
+ * This function initializes the extension hash table from the
+ * ExtensionMappingTable.
+ */
+VOID
+RevInitializeExtensionHashTable(
+    VOID
+    )
+{
+    ULONG i;
+
+    if (RevExtensionHashTableInitialized) {
+        return;
+    }
+
+    RtlZeroMemory((PVOID)RevExtensionHashTable, sizeof(RevExtensionHashTable));
+
+    for (i = 0; i < ARRAYSIZE(ExtensionMappingTable); i += 1) {
+
+        const REVISION_RECORD_EXTENSION_MAPPING *entry =
+            &ExtensionMappingTable[i];
+
+        ULONG hash = RevHashExtensionKey(entry->Extension);
+        ULONG bucket = hash & (REV_EXTENSION_HASH_BUCKET_COUNT - 1);
+
+        ULONG probes = 0;
+
+        while (probes < REV_EXTENSION_HASH_BUCKET_COUNT) {
+
+            if (RevExtensionHashTable[bucket] == NULL) {
+                RevExtensionHashTable[bucket] = entry;
+                break;
+            }
+
+            if (_wcsicmp(RevExtensionHashTable[bucket]->Extension,
+                         entry->Extension) == 0) {
+                //
+                // Duplicate extension in the table, keep the first mapping.
+                //
+                break;
+            }
+
+            bucket = (bucket + 1) & (REV_EXTENSION_HASH_BUCKET_COUNT - 1);
+
+            probes += 1;
+        }
+    }
+
+    RevExtensionHashTableInitialized = TRUE;
+}
+
+/**
+ * @brief This function is responsible for initializing the revision
+ * system.
+ *
+ * @param InitParams Supplies the revision initialization parameters.
+ *
+ * @return TRUE if succeeded, FALSE if failed.
+ */
 BOOL
 RevInitializeRevision(
     _In_ PREVISION_INIT_PARAMS InitParams
@@ -1725,17 +1859,16 @@ RevInitializeRevision(
         goto Exit;
     }
 
-    if (InitParams == NULL ||
-        InitParams->RootDirectory == NULL) {
+    if (InitParams == NULL || InitParams->RootDirectory == NULL) {
 
         RevLogError("Invalid parameter/-s.");
         status = FALSE;
         goto Exit;
     }
 
-    /*
-     * Initialize the revision structure.
-     */
+    //
+    // Initialize the revision structure.
+    //
 
     Revision = (PREVISION)malloc(sizeof(REVISION));
     if (Revision == NULL) {
@@ -1746,13 +1879,14 @@ RevInitializeRevision(
         goto Exit;
     }
 
-    /*
-     * Initialize the list of revision records and other fields.
-     */
+    //
+    // Initialize the list of revision records and other fields.
+    //
     RevInitializeListHead(&Revision->RevisionRecordListHead);
     Revision->InitParams = *InitParams;
     Revision->CountOfLinesTotal = 0;
     Revision->CountOfLinesBlank = 0;
+    Revision->CountOfLinesComment = 0;
     Revision->CountOfFiles = 0;
     Revision->CountOfIgnoredFiles = 0;
 
@@ -1760,6 +1894,13 @@ Exit:
     return status;
 }
 
+/**
+ * @brief This function is responsible for starting the revision system.
+ * It ensures that the system has been initialized correctly before
+ * proceeding with its operations.
+ *
+ * @return TRUE if succeeded, FALSE if failed.
+ */
 BOOL
 RevStartRevision(
     VOID
@@ -1790,6 +1931,17 @@ Exit:
     return status;
 }
 
+/**
+ * @brief This function initializes a REVISION_RECORD structure.
+ *
+ * @param Extension Supplies the file extension of the revision record.
+ *
+ * @param LanguageOrFileType Supplies the language or file type of the
+ * revision record.
+ *
+ * @return If the initialization is successful, returns a pointer to the
+ * new revision record; otherwise, NULL.
+ */
 _Ret_maybenull_
 PREVISION_RECORD
 RevInitializeRevisionRecord(
@@ -1807,39 +1959,88 @@ RevInitializeRevisionRecord(
         return NULL;
     }
 
+    RevInitializeListHead(&revisionRecord->ListEntry);
     revisionRecord->ExtensionMapping.Extension = Extension;
     revisionRecord->ExtensionMapping.LanguageOrFileType = LanguageOrFileType;
     revisionRecord->CountOfLinesTotal = 0;
     revisionRecord->CountOfLinesBlank = 0;
+    revisionRecord->CountOfLinesComment = 0;
     revisionRecord->CountOfFiles = 0;
-    RevInitializeListHead(&revisionRecord->ListEntry);
 
     return revisionRecord;
 }
 
+/**
+ * This function maps a file extension to a language/file type.
+ *
+ * @param Extension Supplies the file extension (e.g. L".c").
+ *
+ * @return Pointer to a language/file type string on success, NULL if
+ *         the extension is unknown.
+ */
 _Ret_maybenull_
 PWCHAR
 RevMapExtensionToLanguage(
     _In_z_ PWCHAR Extension
     )
 {
-    LONG index = 0;
+    ULONG hash;
+    ULONG bucket;
+    ULONG probes;
 
     if (Extension == NULL) {
         RevLogError("Extension is NULL.");
         return NULL;
     }
 
-    do {
-        if (_wcsicmp(Extension, ExtensionMappingTable[index].Extension) == 0) {
-            return ExtensionMappingTable[index].LanguageOrFileType;
+    RevInitializeExtensionHashTable();
+
+    hash = RevHashExtensionKey(Extension);
+    bucket = hash & (REV_EXTENSION_HASH_BUCKET_COUNT - 1);
+    probes = 0;
+
+    while (probes < REV_EXTENSION_HASH_BUCKET_COUNT) {
+
+        const REVISION_RECORD_EXTENSION_MAPPING *entry =
+            RevExtensionHashTable[bucket];
+
+        if (entry == NULL) {
+            break;
         }
-        ++index;
-    } while (index < ARRAYSIZE(ExtensionMappingTable));
+
+        if (_wcsicmp(entry->Extension, Extension) == 0) {
+            return entry->LanguageOrFileType;
+        }
+
+        bucket = (bucket + 1) & (REV_EXTENSION_HASH_BUCKET_COUNT - 1);
+        probes += 1;
+    }
+
+    //
+    // Fallback: linear scan if no entry was found in the hash table.
+    //
+    for (bucket = 0; bucket < ARRAYSIZE(ExtensionMappingTable); bucket += 1) {
+
+        if (_wcsicmp(ExtensionMappingTable[bucket].Extension, Extension) == 0) {
+
+            return ExtensionMappingTable[bucket].LanguageOrFileType;
+        }
+
+    }
 
     return NULL;
 }
 
+/**
+ * @brief This function checks if a REVISION_RECORD for a language/file
+ * type with a given extension exists in the global revision's list of
+ * revision records.
+ *
+ * @param Extension Supplies the file extension to search for.
+ *
+ * @return If a matching REVISION_RECORD is found, returns a pointer to
+ * that record; otherwise, returns NULL.
+ */
 _Ret_maybenull_
 _Must_inspect_result_
 PREVISION_RECORD
@@ -1906,6 +2107,48 @@ RevFindRevisionRecordForLanguageByExtension(
     return revisionRecord;
 }
 
+/**
+ * This function returns the language family for a given language/file type name.
+ *
+ * @param LanguageOrFileType Supplies the language or file type string
+ *                           (as stored in ExtensionMappingTable).
+ *
+ * @return One of REV_LANGUAGE_FAMILY values. Defaults to
+ *         RevLanguageFamilyCStyle if no specific mapping is found.
+ */
+REV_LANGUAGE_FAMILY
+RevGetLanguageFamily(
+    _In_z_ PWCHAR LanguageOrFileType
+    )
+{
+    LONG index;
+
+    if (LanguageOrFileType == NULL) {
+        return RevLanguageFamilyCStyle;
+    }
+
+    for (index = 0; index < ARRAYSIZE(LanguageFamilyMappingTable); index += 1) {
+        if (wcsstr(LanguageOrFileType,
+                   LanguageFamilyMappingTable[index].LanguageSubstring)) {
+            return LanguageFamilyMappingTable[index].LanguageFamily;
+        }
+    }
+
+    //
+    // Default for everything that is not explicitly configured.
+    //
+    return RevLanguageFamilyCStyle;
+}
+
+/**
+ * @brief This function is designed to recursively traverse and enumerate
+ * files and subdirectories within a given root directory path.
+ *
+ * @param RootDirectoryPath Supplies the root directory path from which
+ * enumeration should begin.
+ *
+ * @return TRUE if succeeded, FALSE if failed.
+ */
 _Must_inspect_result_
 BOOL
 RevEnumerateRecursively(
@@ -2065,23 +2308,33 @@ Exit:
     return status;
 }
 
+/**
+ * @brief This function checks whether the specified file should be revised.
+ *
+ * The file is considered for revision if its extension is recognized in the
+ * ExtensionMappingTable.
+ *
+ * @param FileName Supplies the file name (without path).
+ *
+ * @return TRUE if the file should be revised, FALSE otherwise.
+ */
 _Must_inspect_result_
 BOOL
 RevShouldReviseFile(
     _In_z_ PWCHAR FileName
     )
 {
-    LONG i;
-    PWCHAR fileExtension;
+    PWCHAR fileExtension = NULL;
+    PWCHAR languageOrFileType = NULL;
 
     if (FileName == NULL) {
         RevLogError("FileName is NULL.");
         return FALSE;
     }
 
-    /*
-     * Find the file extension.
-     */
+    //
+    // Find the file extension.
+    //
     fileExtension = wcsrchr(FileName, L'.');
     if (fileExtension == NULL) {
         RevLogWarning("Failed to determine the extension for the file \"%ls\".",
@@ -2089,206 +2342,439 @@ RevShouldReviseFile(
         return FALSE;
     }
 
-    /*
-     * Check if the extension matches any entries in the ExtensionMappingTable.
-     */
-    for (i = 0; i < ARRAYSIZE(ExtensionMappingTable); ++i) {
-        if (_wcsicmp(ExtensionMappingTable[i].Extension, fileExtension) == 0) {
-            return TRUE;
-        }
+    //
+    // Check if the extension can be mapped to a known language/file type.
+    //
+    languageOrFileType = RevMapExtensionToLanguage(fileExtension);
+    if (languageOrFileType == NULL) {
+        return FALSE;
     }
 
-    return FALSE;
+    return TRUE;
 }
 
-static
+/**
+ * @brief This function counts lines using C-style comments.
+ *
+ * Supported syntax:
+ *   - Line comments:   // ... until end-of-line.
+ *   - Block comments:  /* ... *\/ (no nesting).
+ *   - String literals: "..." and '...' with simple backslash escaping.
+ *
+ * Lines are classified as:
+ *   - Blank:   only whitespace.
+ *   - Comment: only comment text (no code tokens).
+ *   - Code:    any line that contains code, even if it also has comments.
+ *
+ * @param Buffer Supplies the file contents.
+ *
+ * @param Length Supplies the length of Buffer in bytes.
+ *
+ * @param LineStats Supplies a pointer to a LINE_STATS structure that
+ *        receives the results.
+ */
 VOID
 RevCountLinesCStyle(
-    const PCHAR Buffer,
-    SIZE_T Length,
-    PLINE_STATS LineStats
-)
+    _In_reads_bytes_(Length) const CHAR *Buffer,
+    _In_ SIZE_T Length,
+    _Inout_ PLINE_STATS LineStats
+    )
 {
+    SIZE_T index = {0};
     BOOL inBlockComment = FALSE;
     BOOL inString = FALSE;
     CHAR stringDelim = 0;
     BOOL sawCode = FALSE;
     BOOL sawComment = FALSE;
-    BOOL sawNonWs = FALSE;
-    BOOL prevWasCR = FALSE;
-    SIZE_T i;
-    CHAR c;
-    CHAR next;
+    BOOL sawNonWhitespace = FALSE;
+    BOOL previousWasCR = FALSE;
 
-    for (i = 0; i < Length; ++i) {
+    if (Buffer == NULL || LineStats == NULL || Length == 0) {
+        return;
+    }
 
-        c = Buffer[i];
+    LineStats->CountOfLinesTotal = 0;
+    LineStats->CountOfLinesBlank = 0;
+    LineStats->CountOfLinesComment = 0;
 
-        if (i + 1 < Length) {
-            next = Buffer[i + 1];
+    for (index = 0; index < Length; index += 1) {
+
+        CHAR currentChar = Buffer[index];
+        CHAR nextChar;
+
+        if ((index + 1 < Length)) {
+            nextChar = Buffer[index + 1];
         } else {
-            next = 0;
+            nextChar = 0;
         }
 
         //
-        // Handle CRLF as a single new line.
+        // Handle CR and LF as line terminators, merge CRLF into a single
+        // logical newline.
         //
-        if (c == '\r' || c == '\n') {
+        if (currentChar == CARRIAGE_RETURN || currentChar == LINE_FEED) {
 
-            if (prevWasCR && c == '\n') {
-                //
-                // Already counted at CR, skip LF.
-                //
-                prevWasCR = FALSE;
+            if (previousWasCR && currentChar == LINE_FEED) {
+                previousWasCR = FALSE;
                 continue;
             }
 
-            //
-            // Classify the current line.
-            //
-            LineStats->Total += 1;
+            LineStats->CountOfLinesTotal += 1;
 
-            if (!sawNonWs) {
-                LineStats->Blank += 1;
-            } else if (sawCode) {
-                //
-                // Code wins over comment on mixed lines.
-                //
-            } else if (sawComment) {
-                LineStats->Comment += 1;
-            } else {
-                //
-                // sawNonWs but neither code nor comment? Treat as code.
-                //
+            if (!sawNonWhitespace &&
+                !sawComment &&
+                !sawCode &&
+                !inBlockComment) {
+
+                LineStats->CountOfLinesBlank += 1;
+
+            } else if (!sawCode &&
+                       (sawComment || inBlockComment)) {
+
+                LineStats->CountOfLinesComment += 1;
             }
 
-            //
-            // Reset per-line state.
-            //
             sawCode = FALSE;
             sawComment = FALSE;
-            sawNonWs = FALSE;
+            sawNonWhitespace = FALSE;
 
-            if (c == '\r') {
-                prevWasCR = TRUE;
-            } else {
-                prevWasCR = FALSE;
-            }
+            previousWasCR = (currentChar == CARRIAGE_RETURN);
 
             continue;
         }
 
-        prevWasCR = FALSE;
+        previousWasCR = FALSE;
 
-        if (!isspace((UCHAR) c)) {
-            sawNonWs = TRUE;
+        if (!isspace((UCHAR)currentChar)) {
+            sawNonWhitespace = TRUE;
         }
 
         //
-        // Inside block comment?
+        // Handle characters inside a block comment.
         //
         if (inBlockComment) {
             sawComment = TRUE;
 
-            if (c == '*' && next == '/') {
+            if (currentChar == '*' && nextChar == '/') {
                 //
                 // Consume '/'
                 //
                 inBlockComment = FALSE;
-                i += 1;
+                index += 1;
             }
 
-            //
-            // Everything else within the block comment is ignored
-            // for code purposes.
-            //
             continue;
         }
 
         //
-        // Inside string literal?
+        // Handle characters inside a string literal.
         //
         if (inString) {
-            if (c == '\\' && next != 0) {
+
+            if (currentChar == '\\' && (index + 1) < Length) {
+
                 //
-                // Escape sequence, skip next char.
+                // Skip escaped character.
                 //
-                i += 1;
-            } else if (c == stringDelim) {
+                index += 1;
+
+            } else if (currentChar == stringDelim) {
                 inString = FALSE;
             }
 
-            //
-            // String content counts as code.
-            //
             sawCode = TRUE;
             continue;
         }
 
         //
-        // Outside comments & strings.
+        // Outside strings and block comments.
         //
 
         //
-        // Start of line comment "//"
+        // Line comment: // ...
         //
-        if (c == '/' && next == '/') {
+        if (currentChar == '/' && nextChar == '/') {
+
             sawComment = TRUE;
+
             //
-            // Rest of line is comment; we just ignore characters until newline.
+            // The rest of the line is considered comment and will be handled
+            // when a newline is encountered.
             //
-            break;
+            continue;
         }
 
         //
-        // start of block comment "/*"
+        // Block comment: /* ... *\/
         //
-        if (c == '/' && next == '*') {
+        if (currentChar == '/' && nextChar == '*') {
             //
             // Consume '*'
             //
             inBlockComment = TRUE;
             sawComment = TRUE;
-            i += 1;
+            index += 1;
             continue;
         }
 
         //
         // Start of string literal.
         //
-        if (c == '"' || c == '\'') {
+        if (currentChar == '"' || currentChar == '\'') {
             inString = TRUE;
-            stringDelim = c;
+            stringDelim = currentChar;
             sawCode = TRUE;
             continue;
         }
 
         //
-        // Any other non-whitespace outside comment/string is code.
+        // Any other non-whitespace character outside comments and strings
+        // is treated as code.
         //
-        if (!isspace((UCHAR) c)) {
+        if (!isspace((UCHAR)currentChar)) {
             sawCode = TRUE;
         }
     }
 
     //
-    // Final line (if the file doesn't end with a newline).
+    // Handle the final line when the file does not end with a newline.
     //
-    if (sawNonWs || sawComment || sawCode || inBlockComment) {
-        LineStats->Total += 1;
+    if (sawNonWhitespace || sawComment || sawCode || inBlockComment) {
 
-        if (!sawNonWs && !sawComment && !inBlockComment) {
-            LineStats->Blank += 1;
-        } else if (sawCode) {
-            //
-            // Code line.
-            //
-        } else {
-            LineStats->Comment += 1;
+        LineStats->CountOfLinesTotal += 1;
+
+        if (!sawNonWhitespace && !sawComment && !sawCode && !inBlockComment) {
+
+            LineStats->CountOfLinesBlank += 1;
+
+        } else if (!sawCode &&
+                   (sawComment || inBlockComment)) {
+
+            LineStats->CountOfLinesComment += 1;
         }
     }
 }
 
+/**
+ * @brief This function counts lines using hash-style comments.
+ *
+ * Supported syntax:
+ *   - Line comments:   # ... until end-of-line.
+ *   - String literals: "..." and '...' with simple backslash escaping.
+ *
+ * Lines are classified as:
+ *   - Blank:   only whitespace.
+ *   - Comment: only comment text (no code tokens).
+ *   - Code:    any line that contains code, even if it also has comments.
+ *
+ * @param Buffer Supplies the file contents.
+ *
+ * @param Length Supplies the length of Buffer in bytes.
+ *
+ * @param LineStats Supplies a pointer to a LINE_STATS structure that
+ *                  receives the results.
+ */
+VOID
+RevCountLinesHashStyle(
+    _In_reads_bytes_(Length) PCHAR Buffer,
+    _In_ SIZE_T Length,
+    _Inout_ PLINE_STATS LineStats
+    )
+{
+    SIZE_T index;
+    BOOL inString = FALSE;
+    CHAR stringDelim = 0;
+    BOOL inLineComment = FALSE;
+    BOOL sawCode = FALSE;
+    BOOL sawComment = FALSE;
+    BOOL sawNonWhitespace = FALSE;
+    BOOL previousWasCR = FALSE;
+
+    if (Buffer == NULL || LineStats == NULL || Length == 0) {
+        return;
+    }
+
+    LineStats->CountOfLinesTotal = 0;
+    LineStats->CountOfLinesBlank = 0;
+    LineStats->CountOfLinesComment = 0;
+
+    for (index = 0; index < Length; index += 1) {
+
+        CHAR currentChar = Buffer[index];
+
+        //
+        // Handle CR and LF as line terminators, merge CRLF into a single
+        // logical newline.
+        //
+        if (currentChar == CARRIAGE_RETURN || currentChar == LINE_FEED) {
+
+            if (previousWasCR && currentChar == LINE_FEED) {
+                previousWasCR = FALSE;
+                continue;
+            }
+
+            LineStats->CountOfLinesTotal += 1;
+
+            if (!sawNonWhitespace && !sawComment && !sawCode) {
+                LineStats->CountOfLinesBlank += 1;
+            } else if (!sawCode && sawComment) {
+                LineStats->CountOfLinesComment += 1;
+            }
+
+            sawCode = FALSE;
+            sawComment = FALSE;
+            sawNonWhitespace = FALSE;
+            inLineComment = FALSE;
+
+            previousWasCR = (currentChar == CARRIAGE_RETURN);
+
+            continue;
+        }
+
+        previousWasCR = FALSE;
+
+        if (!isspace((UCHAR)currentChar)) {
+            sawNonWhitespace = TRUE;
+        }
+
+        //
+        // Handle characters inside a "#" line comment.
+        //
+        if (inLineComment) {
+            sawComment = TRUE;
+            continue;
+        }
+
+        //
+        // Handle characters inside a string literal.
+        //
+        if (inString) {
+            if (currentChar == '\\' && (index + 1) < Length) {
+                index += 1;
+            } else if (currentChar == stringDelim) {
+                inString = FALSE;
+            }
+
+            sawCode = TRUE;
+            continue;
+        }
+
+        //
+        // Outside strings and comments.
+        //
+
+        //
+        // Start of string literal.
+        //
+        if (currentChar == '"' || currentChar == '\'') {
+            inString = TRUE;
+            stringDelim = currentChar;
+            sawCode = TRUE;
+            continue;
+        }
+
+        //
+        // Start of line comment.
+        //
+        if (currentChar == '#') {
+            inLineComment = TRUE;
+            sawComment = TRUE;
+            continue;
+        }
+
+        //
+        // Any other non-whitespace character outside comments and strings
+        // is treated as code.
+        //
+        if (!isspace((UCHAR)currentChar)) {
+            sawCode = TRUE;
+        }
+    }
+
+    //
+    // Handle the final line when the file does not end with a newline.
+    //
+    if (sawNonWhitespace || sawComment || sawCode) {
+
+        LineStats->CountOfLinesTotal += 1;
+
+        if (!sawNonWhitespace && !sawComment) {
+            LineStats->CountOfLinesBlank += 1;
+        } else if (!sawCode && sawComment) {
+            LineStats->CountOfLinesComment += 1;
+        }
+    }
+}
+
+/**
+ * This function counts lines using a language family strategy.
+ *
+ * @param Buffer Supplies the file contents.
+ *
+ * @param Length Supplies the length of Buffer in bytes.
+ *
+ * @param LanguageFamily Supplies the language family that determines
+ *                       which comment syntax is used.
+ *
+ * @param LineStats Supplies a pointer to a LINE_STATS structure that
+ *                  receives the results.
+ */
+VOID
+RevCountLinesWithFamily(
+    _In_reads_bytes_(Length) PCHAR Buffer,
+    _In_ SIZE_T Length,
+    _In_ REV_LANGUAGE_FAMILY LanguageFamily,
+    _Inout_ PLINE_STATS LineStats
+    )
+{
+    switch (LanguageFamily) {
+
+    case RevLanguageFamilyHashStyle:
+        RevCountLinesHashStyle(Buffer,
+                               Length,
+                               LineStats);
+        break;
+
+    case RevLanguageFamilyDoubleDash:
+        /*
+         * TODO: Implement a dedicated double-dash parser?
+         */
+        RevCountLinesHashStyle(Buffer,
+                               Length,
+                               LineStats);
+        break;
+
+    case RevLanguageFamilySemicolon:
+        /*
+         * TODO: Implement a dedicated semicolon-style parser?
+         */
+        RevCountLinesCStyle(Buffer,
+                            Length,
+                            LineStats);
+        break;
+
+    case RevLanguageFamilyCStyle:
+    case RevLanguageFamilyUnknown:
+    default:
+        RevCountLinesCStyle(Buffer,
+                            Length,
+                            LineStats);
+        break;
+    }
+}
+
+/**
+ * @brief This function reads and revises the specified file.
+ *
+ * The function reads the file contents into memory, determines the
+ * appropriate comment syntax based on the file extension and language
+ * mapping, counts total/blank/comment lines and updates the global
+ * revision statistics.
+ *
+ * @param FilePath Supplies the path to the file to be revised.
+ *
+ * @return TRUE if succeeded, FALSE if failed.
+ */
 _Must_inspect_result_
 BOOL
 RevReviseFile(
@@ -2297,13 +2783,47 @@ RevReviseFile(
 {
     BOOL status = TRUE;
     PREVISION_RECORD revisionRecord = NULL;
-    LINE_STATS stats = {0};
     HANDLE file = INVALID_HANDLE_VALUE;
     LARGE_INTEGER fileSize;
     PCHAR fileBuffer = NULL;
     DWORD fileBufferSize = 0;
     DWORD bytesRead = 0;
     PWCHAR fileExtension = NULL;
+    PWCHAR languageOrFileType = NULL;
+    REV_LANGUAGE_FAMILY languageFamily = RevLanguageFamilyUnknown;
+    LINE_STATS lineStats = {0};
+
+    if (FilePath == NULL) {
+        RevLogError("FilePath is NULL.");
+        status = FALSE;
+        goto Exit;
+    }
+
+    //
+    // Determine the file extension and mapping before reading.
+    //
+    fileExtension = wcsrchr(FilePath, L'.');
+    if (fileExtension == NULL) {
+        RevLogWarning("Failed to determine the extension for the file \"%ls\".",
+                      FilePath);
+        status = FALSE;
+        goto Exit;
+    }
+
+    languageOrFileType = RevMapExtensionToLanguage(fileExtension);
+
+    if (languageOrFileType == NULL) {
+        //
+        // Should not normally reach here because RevShouldReviseFile()
+        // already filtered by extension.
+        //
+        RevLogWarning("No language mapping found for extension \"%ls\".",
+                      fileExtension);
+        status = FALSE;
+        goto Exit;
+    }
+
+    languageFamily = RevGetLanguageFamily(languageOrFileType);
 
     //
     // Attempt to open the file.
@@ -2315,6 +2835,7 @@ RevReviseFile(
                       OPEN_EXISTING,
                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
                       NULL);
+
     if (file == INVALID_HANDLE_VALUE) {
         RevLogError("Failed to open the file \"%ls\". Error: %ls.",
                     FilePath,
@@ -2343,7 +2864,9 @@ RevReviseFile(
     }
 
     //
-    // TODO: Simple implementation limit; could be improved with chunked reading
+    // Allocate buffer for the entire file.
+    // N.B. Currently, reading only ANSI files is supported, so the read buffer
+    // is allocated using sizeof(CHAR).
     //
     if (fileSize.QuadPart > MAXDWORD) {
         RevLogError("File \"%ls\" is too large (%lld bytes) "
@@ -2354,9 +2877,10 @@ RevReviseFile(
         goto Exit;
     }
 
-    fileBufferSize = (DWORD) fileSize.QuadPart;
+    fileBufferSize = (DWORD)fileSize.QuadPart;
 
-    fileBuffer = (PCHAR) malloc(fileBufferSize);
+    fileBuffer = (PCHAR)malloc(fileBufferSize);
+
     if (fileBuffer == NULL) {
         RevLogError("Failed to allocate %llu bytes for file buffer",
                     fileSize.QuadPart * sizeof(CHAR));
@@ -2372,6 +2896,7 @@ RevReviseFile(
                   fileBufferSize,
                   &bytesRead,
                   NULL)) {
+
         RevLogError("Failed to read file \"%ls\". Error: %ls.",
                     FilePath,
                     RevGetLastKnownWin32Error());
@@ -2381,29 +2906,20 @@ RevReviseFile(
 
     if (bytesRead == 0) {
         //
-        // nothing read, treat as emptyю
+        // Nothing read, treat as empty.
         //
         goto UpdateStats;
     }
 
     //
-    // Now decide which classifier to use.
-    // For now, assume C-style comments for everything.
+    // Count lines using a language family-aware strategy.
     //
-    RevCountLinesCStyle(fileBuffer, bytesRead, &stats);
+    RevCountLinesWithFamily(fileBuffer,
+                            bytesRead,
+                            languageFamily,
+                            &lineStats);
 
 UpdateStats:
-
-    //
-    // Determine the file extension.
-    //
-    fileExtension = wcsrchr(FilePath, L'.');
-    if (fileExtension == NULL) {
-        RevLogError("Failed to determine the extension for the file \"%ls\".",
-                    FilePath);
-        status = FALSE;
-        goto Exit;
-    }
 
     //
     // If there is a revision record for that language/file type in the revision
@@ -2411,6 +2927,7 @@ UpdateStats:
     // we create a new node for it in the list.
     //
     revisionRecord = RevFindRevisionRecordForLanguageByExtension(fileExtension);
+
     if (revisionRecord == NULL) {
         RevLogError("Failed to find/initialize the revision record for the file"
                     " extension \"%ls\".",
@@ -2420,22 +2937,23 @@ UpdateStats:
     }
 
     //
-    // Update per-extension stats.
+    // Update the stats for the extension.
     //
-    revisionRecord->CountOfLinesTotal += stats.Total;
-    revisionRecord->CountOfLinesBlank += stats.Blank;
-    revisionRecord->CountOfLinesComment += stats.Comment;
+    revisionRecord->CountOfLinesTotal += lineStats.CountOfLinesTotal;
+    revisionRecord->CountOfLinesBlank += lineStats.CountOfLinesBlank;
+    revisionRecord->CountOfLinesComment += lineStats.CountOfLinesComment;
     revisionRecord->CountOfFiles += 1;
 
     //
-    // Update global stats.
+    // Update the stats for the entire revision.
     //
-    Revision->CountOfLinesTotal += stats.Total;
-    Revision->CountOfLinesBlank += stats.Blank;
-    Revision->CountOfLinesComment += stats.Comment;
+    Revision->CountOfLinesTotal += lineStats.CountOfLinesTotal;
+    Revision->CountOfLinesBlank += lineStats.CountOfLinesBlank;
+    Revision->CountOfLinesComment += lineStats.CountOfLinesComment;
     Revision->CountOfFiles += 1;
 
 Exit:
+
     if (file != INVALID_HANDLE_VALUE) {
         CloseHandle(file);
     }
@@ -2451,6 +2969,9 @@ Exit:
     return status;
 }
 
+/**
+ * This function outputs the revision statistics to the console.
+ */
 VOID
 RevOutputRevisionStatistics(
     VOID
@@ -2459,52 +2980,95 @@ RevOutputRevisionStatistics(
     PLIST_ENTRY entry = NULL;
     PREVISION_RECORD revisionRecord = NULL;
 
-    /*
-     * The table header.
-     */
+    //
+    // The table header.
+    //
+
     RevPrint(L"----------------------------------------------------------------"
-             "------------------\n");
-    RevPrint(L"%-25s%10s%15s%15s%15s\n",
+             "---------------------------------------------\n");
+    RevPrint(L"%-25s%10s%15s%15s%15s%15s\n",
              L"File Type",
              L"Files",
              L"Blank",
              L"Comment",
+             L"Code",
              L"Total");
     RevPrint(L"----------------------------------------------------------------"
-             "------------------\n");
+             "---------------------------------------------\n");
 
-    /*
-     * Iterate through the revision record list and print statistics for each
-     * file type.
-     */
-    for (entry = Revision->RevisionRecordListHead.Flink;
-         entry != &Revision->RevisionRecordListHead;
-         entry = entry->Flink) {
+    //
+    // Iterate through the list of revision records and print statistics
+    // for each one.
+    //
 
-        revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
-        if (revisionRecord) {
-            RevPrint(L"%-25s%10u%15llu%15llu%15llu\n",
-                     revisionRecord->ExtensionMapping.LanguageOrFileType,
-                     revisionRecord->CountOfFiles,
-                     revisionRecord->CountOfLinesBlank,
-                     revisionRecord->CountOfLinesComment,
-                     revisionRecord->CountOfLinesTotal);
+    entry = Revision->RevisionRecordListHead.Flink;
+
+    while (entry != &Revision->RevisionRecordListHead) {
+
+        ULONGLONG total;
+        ULONGLONG blank;
+        ULONGLONG comment;
+        ULONGLONG code;
+
+        revisionRecord = CONTAINING_RECORD(entry,
+                                           REVISION_RECORD,
+                                           ListEntry);
+
+        total = revisionRecord->CountOfLinesTotal;
+        blank = revisionRecord->CountOfLinesBlank;
+        comment = revisionRecord->CountOfLinesComment;
+
+        if (total >= blank + comment) {
+            code = total - blank - comment;
+        } else {
+            code = 0;
         }
+
+        RevPrint(L"%-25s%10u%15llu%15llu%15llu%15llu\n",
+                 revisionRecord->ExtensionMapping.LanguageOrFileType,
+                 revisionRecord->CountOfFiles,
+                 blank,
+                 comment,
+                 code,
+                 total);
+
+        entry = entry->Flink;
     }
 
-    /*
-     * The table footer with total statistics.
-     */
+    //
+    // The table footer with total statistics.
+    //
+
     RevPrint(L"----------------------------------------------------------------"
-             "------------------\n");
-    RevPrint(L"%-25s%10s%15s%15s%15s\n",
-             L"Total:",
-             Revision->CountOfFiles,
-             Revision->CountOfLinesBlank,
-             Revision->CountOfLinesComment,
-             Revision->CountOfLinesTotal);
+             "---------------------------------------------\n");
+
+    {
+        ULONGLONG total;
+        ULONGLONG blank;
+        ULONGLONG comment;
+        ULONGLONG code;
+
+        total = Revision->CountOfLinesTotal;
+        blank = Revision->CountOfLinesBlank;
+        comment = Revision->CountOfLinesComment;
+
+        if (total >= blank + comment) {
+            code = total - blank - comment;
+        } else {
+            code = 0;
+        }
+
+        RevPrint(L"%-25s%10u%15llu%15llu%15llu%15llu\n",
+                 L"Total:",
+                 Revision->CountOfFiles,
+                 blank,
+                 comment,
+                 code,
+                 total);
+    }
+
     RevPrint(L"----------------------------------------------------------------"
-             "------------------\n");
+             "---------------------------------------------\n");
 }
 
 int
