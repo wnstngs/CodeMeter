@@ -1394,6 +1394,15 @@ RevCountLinesHashStyle(
     );
 
 VOID
+RevCountLinesLineCommentStyle(
+    _In_reads_bytes_(Length) const CHAR *Buffer,
+    _In_ SIZE_T Length,
+    _In_ CHAR FirstCommentChar,
+    _In_ CHAR SecondCommentChar,
+    _Inout_ PLINE_STATS LineStats
+    );
+
+VOID
 RevCountLinesWithFamily(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
@@ -2556,16 +2565,7 @@ RevCountLinesCStyle(
 }
 
 /**
- * @brief This function counts lines using hash-style comments.
- *
- * Supported syntax:
- *   - Line comments:   # ... until end-of-line.
- *   - String literals: "..." and '...' with simple backslash escaping.
- *
- * Lines are classified as:
- *   - Blank:   only whitespace.
- *   - Comment: only comment text (no code tokens).
- *   - Code:    any line that contains code, even if it also has comments.
+ * This function counts lines using hash-style comments ("# ...").
  *
  * @param Buffer Supplies the file contents.
  *
@@ -2578,6 +2578,48 @@ VOID
 RevCountLinesHashStyle(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
+    _Inout_ PLINE_STATS LineStats
+    )
+{
+    RevCountLinesLineCommentStyle(Buffer,
+                                  Length,
+                                  '#',
+                                  0,
+                                  LineStats);
+}
+
+/**
+ * @brief This function is a helper that counts lines for languages that
+ *        use only line comments with a fixed prefix (e.g. '#', ';', '--').
+ *
+ * Supported syntax:
+ *   - Line comments:   FirstCommentChar [SecondCommentChar] ... until EOL.
+ *   - String literals: "..." and '...' with simple backslash escaping.
+ *
+ * Lines are classified as:
+ *   - Blank:   only whitespace.
+ *   - Comment: only comment text (no code tokens).
+ *   - Code:    any line that contains code, even if it also has comments.
+ *
+ * @param Buffer Supplies the file contents.
+ *
+ * @param Length Supplies the length of Buffer in bytes.
+ *
+ * @param FirstCommentChar  Supplies the first character of the comment
+ *                          prefix (e.g. '#', '-', ';').
+ *
+ * @param SecondCommentChar Supplies the second character of the comment
+ *                          prefix, or 0 for a single-character prefix.
+ *
+ * @param LineStats Supplies a pointer to a LINE_STATS structure that
+ *                  receives the results.
+ */
+VOID
+RevCountLinesLineCommentStyle(
+    _In_reads_bytes_(Length) const CHAR *Buffer,
+    _In_ SIZE_T Length,
+    _In_ CHAR FirstCommentChar,
+    _In_ CHAR SecondCommentChar,
     _Inout_ PLINE_STATS LineStats
     )
 {
@@ -2601,6 +2643,7 @@ RevCountLinesHashStyle(
     for (index = 0; index < Length; index += 1) {
 
         CHAR currentChar = Buffer[index];
+        CHAR nextChar = (index + 1 < Length) ? Buffer[index + 1] : 0;
 
         //
         // Handle CR and LF as line terminators, merge CRLF into a single
@@ -2638,7 +2681,7 @@ RevCountLinesHashStyle(
         }
 
         //
-        // Handle characters inside a "#" line comment.
+        // Handle characters inside a line comment.
         //
         if (inLineComment) {
             sawComment = TRUE;
@@ -2650,6 +2693,9 @@ RevCountLinesHashStyle(
         //
         if (inString) {
             if (currentChar == '\\' && (index + 1) < Length) {
+                //
+                // Skip escaped character.
+                //
                 index += 1;
             } else if (currentChar == stringDelim) {
                 inString = FALSE;
@@ -2674,12 +2720,31 @@ RevCountLinesHashStyle(
         }
 
         //
-        // Start of line comment.
+        // Start of line comment (single-char or two-char prefix).
         //
-        if (currentChar == '#') {
-            inLineComment = TRUE;
-            sawComment = TRUE;
-            continue;
+        if (SecondCommentChar == 0) {
+
+            if (currentChar == FirstCommentChar) {
+                inLineComment = TRUE;
+                sawComment = TRUE;
+                continue;
+            }
+
+        } else {
+
+            if (currentChar == FirstCommentChar &&
+                nextChar == SecondCommentChar) {
+
+                inLineComment = TRUE;
+                sawComment = TRUE;
+
+                //
+                // Consume the second character of the prefix so it isn't
+                // re-processed.
+                //
+                index += 1;
+                continue;
+            }
         }
 
         //
@@ -2700,6 +2765,7 @@ RevCountLinesHashStyle(
 
         if (!sawNonWhitespace && !sawComment) {
             LineStats->CountOfLinesBlank += 1;
+
         } else if (!sawCode && sawComment) {
             LineStats->CountOfLinesComment += 1;
         }
@@ -2730,32 +2796,42 @@ RevCountLinesWithFamily(
     switch (LanguageFamily) {
 
     case RevLanguageFamilyHashStyle:
+        //
+        // Languages with "#" line comments.
+        //
         RevCountLinesHashStyle(Buffer,
                                Length,
                                LineStats);
         break;
 
     case RevLanguageFamilyDoubleDash:
-        /*
-         * TODO: Implement a dedicated double-dash parser?
-         */
-        RevCountLinesHashStyle(Buffer,
-                               Length,
-                               LineStats);
+        //
+        // Languages with "--" line comments.
+        //
+        RevCountLinesLineCommentStyle(Buffer,
+                                      Length,
+                                      '-',
+                                      '-',
+                                      LineStats);
         break;
 
     case RevLanguageFamilySemicolon:
-        /*
-         * TODO: Implement a dedicated semicolon-style parser?
-         */
-        RevCountLinesCStyle(Buffer,
-                            Length,
-                            LineStats);
+        //
+        // Languages with ";" line comments.
+        //
+        RevCountLinesLineCommentStyle(Buffer,
+                                      Length,
+                                      ';',
+                                      0,
+                                      LineStats);
         break;
 
     case RevLanguageFamilyCStyle:
     case RevLanguageFamilyUnknown:
     default:
+        //
+        // Languages with // and /* ... */ comments.
+        //
         RevCountLinesCStyle(Buffer,
                             Length,
                             LineStats);
