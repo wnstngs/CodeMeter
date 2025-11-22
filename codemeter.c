@@ -1388,14 +1388,14 @@ RevCountLinesCStyle(
 
 VOID
 RevCountLinesHashStyle(
-    _In_reads_bytes_(Length) PCHAR Buffer,
+    _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
     _Inout_ PLINE_STATS LineStats
     );
 
 VOID
 RevCountLinesWithFamily(
-    _In_reads_bytes_(Length) PCHAR Buffer,
+    _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
     _In_ REV_LANGUAGE_FAMILY LanguageFamily,
     _Inout_ PLINE_STATS LineStats
@@ -2576,7 +2576,7 @@ RevCountLinesCStyle(
  */
 VOID
 RevCountLinesHashStyle(
-    _In_reads_bytes_(Length) PCHAR Buffer,
+    _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
     _Inout_ PLINE_STATS LineStats
     )
@@ -2721,7 +2721,7 @@ RevCountLinesHashStyle(
  */
 VOID
 RevCountLinesWithFamily(
-    _In_reads_bytes_(Length) PCHAR Buffer,
+    _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
     _In_ REV_LANGUAGE_FAMILY LanguageFamily,
     _Inout_ PLINE_STATS LineStats
