@@ -2144,13 +2144,17 @@ RevReviseFile(
      * TODO: Check that file size is not too huge (prevent DWORD overflow):
      *       `if (fileSize.QuadPart > (SIZE_MAX / sizeof(CHAR))) {} else {}`
      */
-    fileBufferSize = (DWORD)fileSize.QuadPart;
-    if (fileSize.QuadPart > (SIZE_MAX / sizeof(CHAR))) {
-        RevLogError("File size (%ull) too huge for buffer allocation.",
+    if (fileSize.QuadPart > MAXDWORD) {
+        RevLogError("File \"%ls\" is too large (%lld bytes) "
+                    "for single-buffer read.",
+                    FilePath,
                     fileSize.QuadPart);
         status = FALSE;
         goto Exit;
     }
+
+    fileBufferSize = (DWORD)fileSize.QuadPart;
+
     fileBuffer = (PCHAR)malloc(fileBufferSize);
     if (fileBuffer == NULL) {
         RevLogError("Failed to allocate %llu bytes for file buffer",
