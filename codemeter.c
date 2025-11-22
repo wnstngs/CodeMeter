@@ -1831,7 +1831,7 @@ RevMapExtensionToLanguage(
     }
 
     do {
-        if (wcscmp(Extension, ExtensionMappingTable[index].Extension) == 0) {
+        if (_wcsicmp(Extension, ExtensionMappingTable[index].Extension) == 0) {
             return ExtensionMappingTable[index].LanguageOrFileType;
         }
         ++index;
@@ -2093,7 +2093,7 @@ RevShouldReviseFile(
      * Check if the extension matches any entries in the ExtensionMappingTable.
      */
     for (i = 0; i < ARRAYSIZE(ExtensionMappingTable); ++i) {
-        if (wcscmp(ExtensionMappingTable[i].Extension, fileExtension) == 0) {
+        if (_wcsicmp(ExtensionMappingTable[i].Extension, fileExtension) == 0) {
             return TRUE;
         }
     }
