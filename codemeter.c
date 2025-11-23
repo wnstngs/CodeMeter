@@ -46,6 +46,14 @@ Abstract:
 // ------------------------------------------------------- Data Type Definitions
 //
 
+typedef struct ENUMERATION_OPTIONS {
+    /**
+     * If TRUE, the enumerator will recursively traverse subdirectories.
+     * If FALSE, only the top-level directory is enumerated.
+     */
+    BOOL ShouldRecurseIntoSubdirectories;
+} ENUMERATION_OPTIONS, *PENUMERATION_OPTIONS;
+
 /**
  * This structure stores the initialization parameters of the
  * revision provided by the user at launch.
@@ -60,10 +68,15 @@ typedef struct REVISION_INIT_PARAMS {
      * Indicates whether verbose revision mode is active.
      */
     BOOL IsVerboseMode;
+
+    /**
+     * Enumeration options that control how directory traversal is performed.
+     */
+    ENUMERATION_OPTIONS EnumerationOptions;
 } REVISION_INIT_PARAMS, *PREVISION_INIT_PARAMS;
 
 /**
- * his enumeration defines the types of file extensions
+ * This enumeration defines the types of file extensions
  * (to be used in REVISION_RECORD_EXTENSION_MAPPING).
  */
 typedef enum REVISION_RECORD_EXTENSION_TYPE {
@@ -220,6 +233,27 @@ typedef struct LANGUAGE_FAMILY_MAPPING {
     _Field_z_ PWCHAR LanguageSubstring;
     REV_LANGUAGE_FAMILY LanguageFamily;
 } LANGUAGE_FAMILY_MAPPING, *PLANGUAGE_FAMILY_MAPPING;
+
+/**
+ * @brief Callback prototype for processing files and directories during
+ *        enumeration.
+ *
+ * The callback is invoked once for every file or directory discovered.
+ *
+ * @param FullPath Supplies the full path to the file or directory.
+ *
+ * @param FindData Supplies the corresponding WIN32_FIND_DATAW structure.
+ *
+ * @param Context Supplies an optional user-defined context pointer that
+ *                was passed to the enumerator.
+ *
+ * @return TRUE to continue enumeration, FALSE to stop.
+ */
+typedef BOOL (*PREV_FILE_VISITOR)(
+    _In_z_ PWCHAR FullPath,
+    _In_ const WIN32_FIND_DATAW *FindData,
+    _Inout_opt_ PVOID Context
+    );
 
 /**
  * This enumeration represents different console text colors.
@@ -1360,12 +1394,6 @@ RevGetLanguageFamily(
     _In_z_ PWCHAR LanguageOrFileType
     );
 
-_Must_inspect_result_
-BOOL
-RevEnumerateRecursively(
-    _In_z_ PWCHAR RootDirectoryPath
-    );
-
 _Ret_maybenull_
 PWCHAR
 RevMapExtensionToLanguage(
@@ -1408,6 +1436,29 @@ RevCountLinesWithFamily(
     _In_ SIZE_T Length,
     _In_ REV_LANGUAGE_FAMILY LanguageFamily,
     _Inout_ PLINE_STATS LineStats
+    );
+
+_Must_inspect_result_
+BOOL
+RevEnumerateDirectoryWithVisitor(
+    _In_z_ PWCHAR RootDirectoryPath,
+    _In_ PREV_FILE_VISITOR Visitor,
+    _Inout_opt_ PVOID Context,
+    _In_opt_ PENUMERATION_OPTIONS Options
+    );
+
+_Must_inspect_result_
+BOOL
+RevRevisionFileVisitor(
+    _In_z_ PWCHAR FullPath,
+    _In_ const WIN32_FIND_DATAW *FindData,
+    _Inout_opt_ PVOID Context
+    );
+
+_Must_inspect_result_
+BOOL
+RevEnumerateRecursively(
+    _In_z_ PWCHAR RootDirectoryPath
     );
 
 _Must_inspect_result_
@@ -2153,18 +2204,29 @@ RevGetLanguageFamily(
 }
 
 /**
- * @brief This function is designed to recursively traverse and enumerate
- * files and subdirectories within a given root directory path.
+ * @brief Generic directory enumerator that traverses files and optional
+ *        subdirectories and invokes a visitor callback for each entry.
  *
  * @param RootDirectoryPath Supplies the root directory path from which
- * enumeration should begin.
+ *        enumeration should begin (without wildcard characters).
+ *
+ * @param Visitor Supplies a callback invoked for each discovered file or
+ *                directory.
+ *
+ * @param Context Supplies an optional user-defined context pointer.
+ *
+ * @param Options Supplies optional enumeration options. If NULL, default
+ *                options are used (recursive traversal).
  *
  * @return TRUE if succeeded, FALSE if failed.
  */
 _Must_inspect_result_
 BOOL
-RevEnumerateRecursively(
-    _In_z_ PWCHAR RootDirectoryPath
+RevEnumerateDirectoryWithVisitor(
+    _In_z_ PWCHAR RootDirectoryPath,
+    _In_ PREV_FILE_VISITOR Visitor,
+    _Inout_opt_ PVOID Context,
+    _In_opt_ PENUMERATION_OPTIONS Options
     )
 {
     BOOL status = TRUE;
@@ -2173,25 +2235,13 @@ RevEnumerateRecursively(
     PWCHAR searchPath = NULL;
     SIZE_T rootLength = 0;
     BOOL hasTrailingSeparator = FALSE;
+    BOOL shouldRecurse = TRUE;
 
     //
-    // Check the validity of passed arguments.
+    // Validate parameters.
     //
-    if (RootDirectoryPath == NULL) {
+    if (RootDirectoryPath == NULL || Visitor == NULL) {
         RevLogError("Invalid parameter/-s.");
-        status = FALSE;
-        goto Exit;
-    }
-
-    //
-    // RootDirectoryPath is expected to be a plain directory path without
-    // wildcard characters to keep path handling more predictable.
-    //
-    if (wcschr(RootDirectoryPath, L'*') != NULL) {
-
-        RevLogError("The root directory path \"%ls\" must not contain "
-                    "wildcard characters.",
-                    RootDirectoryPath);
         status = FALSE;
         goto Exit;
     }
@@ -2202,6 +2252,22 @@ RevEnumerateRecursively(
         RevLogError("Root directory path is empty.");
         status = FALSE;
         goto Exit;
+    }
+
+    //
+    // RootDirectoryPath is expected to be a plain directory path without
+    // wildcard characters. This keeps path handling simple and predictable.
+    //
+    if (wcschr(RootDirectoryPath, L'*') != NULL) {
+        RevLogError("The root directory path \"%ls\" must not contain "
+                    "wildcard characters.",
+                    RootDirectoryPath);
+        status = FALSE;
+        goto Exit;
+    }
+
+    if (Options != NULL) {
+        shouldRecurse = Options->ShouldRecurseIntoSubdirectories;
     }
 
     //
@@ -2252,7 +2318,7 @@ RevEnumerateRecursively(
     }
 
     //
-    // Try to find a file or subdirectory with a name that matches the pattern.
+    // Start enumeration.
     //
     findFile = FindFirstFileW(searchPath,
                               &findFileData);
@@ -2261,7 +2327,6 @@ RevEnumerateRecursively(
     searchPath = NULL;
 
     if (findFile == INVALID_HANDLE_VALUE) {
-
         RevLogError("Failed to start enumeration in directory \"%ls\". "
                     "The last known error: %ls.",
                     RootDirectoryPath,
@@ -2284,7 +2349,7 @@ RevEnumerateRecursively(
         }
 
         //
-        // Build the full path for the current entry:
+        // Build the full path to the current entry:
         //   RootDirectoryPath [\\] FileName
         //
         {
@@ -2300,7 +2365,8 @@ RevEnumerateRecursively(
             //
             // +1 for NUL
             //
-            SIZE_T subPathLength = rootLength + separatorChars + nameLength + 1;
+            SIZE_T subPathLength =
+                rootLength + separatorChars + nameLength + 1;
 
             subPath = (PWCHAR)malloc(subPathLength * sizeof(WCHAR));
 
@@ -2320,9 +2386,19 @@ RevEnumerateRecursively(
         }
 
         //
-        // Check if a directory was found.
+        // Process the entry with the visitor.
         //
-        if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        if (!Visitor(subPath, &findFileData, Context)) {
+            free(subPath);
+            status = FALSE;
+            break;
+        }
+
+        //
+        // If a subdirectory was found and recursion is enabled, traverse it.
+        //
+        if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY &&
+            shouldRecurse) {
 
             //
             // Skip reparse points to avoid infinite loops.
@@ -2333,61 +2409,21 @@ RevEnumerateRecursively(
                 continue;
             }
 
-            //
-            // Recursively traverse a subdirectory. Pass a duplicate of the
-            // path so that the callee owns and may free its buffer without
-            // affecting the caller.
-            //
-            {
-                PWCHAR subPathCopy = _wcsdup(subPath);
+            if (!RevEnumerateDirectoryWithVisitor(subPath,
+                                                  Visitor,
+                                                  Context,
+                                                  Options)) {
+
+                RevLogError("Recursive subdirectory traversal failed for "
+                            "\"%ls\".",
+                            subPath);
                 free(subPath);
-                subPath = NULL;
-
-                if (subPathCopy == NULL) {
-                    RevLogError("Failed to duplicate subdirectory path.");
-                    status = FALSE;
-                    break;
-                }
-
-                if (!RevEnumerateRecursively(subPathCopy)) {
-                    RevLogError("Recursive subdirectory traversal failed for "
-                                "\"%ls\".",
-                                subPathCopy);
-                    status = FALSE;
-                }
-
-                free(subPathCopy);
-
-                if (!status) {
-                    break;
-                }
-            }
-
-        } else {
-
-            //
-            // A regular file was found. If the file extension is recognized,
-            // revise the file; otherwise, count it as ignored.
-            //
-            if (RevShouldReviseFile(findFileData.cFileName)) {
-
-                if (!RevReviseFile(subPath)) {
-                    RevLogError("RevReviseFile failed to revise file \"%ls\".",
-                                subPath);
-                    //
-                    // Do not treat this as a fatal error for enumeration.
-                    // Continue with other files.
-                    //
-                }
-
-                free(subPath);
-
-            } else {
-
-                Revision->CountOfIgnoredFiles += 1;
-                free(subPath);
+                status = FALSE;
+                break;
             }
         }
+
+        free(subPath);
 
     } while (FindNextFileW(findFile, &findFileData) != 0);
 
@@ -2408,6 +2444,101 @@ Exit:
     if (findFile != INVALID_HANDLE_VALUE) {
         FindClose(findFile);
     }
+
+    return status;
+}
+
+/**
+ * @brief Default file visitor used by the revision engine.
+ *
+ * This visitor revises regular files whose extensions are recognized
+ * by RevShouldReviseFile and increments the ignored file counter
+ * otherwise. Directories are ignored by this visitor (recursion is
+ * handled by the enumerator itself).
+ *
+ * @param FullPath Supplies the full path to the file or directory.
+ *
+ * @param FindData Supplies the corresponding WIN32_FIND_DATAW structure.
+ *
+ * @param Context Supplies an optional user-defined context pointer.
+ *
+ * @return TRUE to continue enumeration, FALSE to stop.
+ */
+_Must_inspect_result_
+BOOL
+RevRevisionFileVisitor(
+    _In_z_ PWCHAR FullPath,
+    _In_ const WIN32_FIND_DATAW *FindData,
+    _Inout_opt_ PVOID Context
+    )
+{
+    UNREFERENCED_PARAMETER(Context);
+
+    if (FullPath == NULL || FindData == NULL) {
+        RevLogError("RevRevisionFileVisitor received invalid parameter/-s.");
+        return FALSE;
+    }
+
+    //
+    // Directories are not revised here; recursion is handled by the
+    // enumerator itself.
+    //
+    if (FindData->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        return TRUE;
+    }
+
+    //
+    // For regular files, check whether the file should be revised based
+    // on its extension. RevShouldReviseFile() expects only the file name.
+    //
+    if (RevShouldReviseFile(FindData->cFileName)) {
+
+        if (!RevReviseFile(FullPath)) {
+
+            RevLogError("RevReviseFile failed to revise file \"%ls\".",
+                        FullPath);
+
+            //
+            // Do not stop enumeration on a single file failure. Other files
+            // may still be processed.
+            //
+        }
+
+    } else {
+
+        if (Revision != NULL) {
+            Revision->CountOfIgnoredFiles += 1;
+        }
+    }
+
+    return TRUE;
+}
+
+/**
+ * @brief This function is designed to recursively traverse and enumerate
+ * files and subdirectories within a given root directory path using the
+ * default revision visitor.
+ *
+ * @param RootDirectoryPath Supplies the root directory path from which
+ *                          enumeration should begin.
+ *
+ * @return TRUE if succeeded, FALSE if failed.
+ */
+_Must_inspect_result_
+BOOL
+RevEnumerateRecursively(
+    _In_z_ PWCHAR RootDirectoryPath
+    )
+{
+    BOOL status = TRUE;
+    ENUMERATION_OPTIONS options;
+
+    options.ShouldRecurseIntoSubdirectories = TRUE;
+
+    status = RevEnumerateDirectoryWithVisitor(RootDirectoryPath,
+                                              RevRevisionFileVisitor,
+                                              NULL,
+                                              &options);
 
     return status;
 }
