@@ -2742,8 +2742,9 @@ RevCountLinesCStyle(
     _Inout_ PFILE_LINE_STATS FileLineStats
     )
 {
-    SIZE_T index;
+    SIZE_T index = {0};
     BOOL inBlockComment = FALSE;
+    BOOL inLineComment = FALSE;
     BOOL inString = FALSE;
     CHAR stringDelim = 0;
     BOOL sawCode = FALSE;
@@ -2790,6 +2791,7 @@ RevCountLinesCStyle(
             sawCode = FALSE;
             sawComment = FALSE;
             sawNonWhitespace = FALSE;
+            inLineComment = FALSE;
 
             previousWasCR = (currentChar == CARRIAGE_RETURN);
 
@@ -2803,12 +2805,13 @@ RevCountLinesCStyle(
         }
 
         //
-        // Handle characters inside a block comment.
+        // Inside a block comment: everything until "*/" is comment.
         //
         if (inBlockComment) {
             sawComment = TRUE;
 
             if (currentChar == '*' && nextChar == '/') {
+
                 //
                 // Consume '/'
                 //
@@ -2816,6 +2819,14 @@ RevCountLinesCStyle(
                 index += 1;
             }
 
+            continue;
+        }
+
+        //
+        // Inside a line comment: everything until newline is comment.
+        //
+        if (inLineComment) {
+            sawComment = TRUE;
             continue;
         }
 
@@ -2840,7 +2851,7 @@ RevCountLinesCStyle(
         }
 
         //
-        // Outside strings and block comments.
+        // Outside strings and comments.
         //
 
         //
@@ -2848,24 +2859,28 @@ RevCountLinesCStyle(
         //
         if (currentChar == '/' && nextChar == '/') {
 
+            inLineComment = TRUE;
             sawComment = TRUE;
 
             //
-            // The rest of the line is considered comment and will be handled
-            // when a newline is encountered.
+            // Optionally consume the second '/' so it will not be
+            // re-processed as part of the comment body.
             //
+            index += 1;
             continue;
         }
 
         //
-        // Block comment: /* ... */
+        // Block comment: /* ... *\/
         //
         if (currentChar == '/' && nextChar == '*') {
+
+            inBlockComment = TRUE;
+            sawComment = TRUE;
+
             //
             // Consume '*'
             //
-            inBlockComment = TRUE;
-            sawComment = TRUE;
             index += 1;
             continue;
         }
