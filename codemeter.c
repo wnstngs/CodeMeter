@@ -223,10 +223,54 @@ typedef struct FILE_LINE_STATS {
  */
 typedef enum COMMENT_STYLE_FAMILY {
     RevLanguageFamilyUnknown = 0,
-    RevLanguageFamilyCStyle,     /* // and /* ... *\/ style */
-    RevLanguageFamilyHashStyle,  /* # ... */
-    RevLanguageFamilyDoubleDash, /* -- ... (SQL, Haskell, etc.) */
-    RevLanguageFamilySemicolon,  /* ; ... (some Lisps, assembly) */
+
+    /**
+     * C-like syntax:
+     *   - Line comments:   // ...
+     *   - Block comments:  /* ... *\/
+     */
+    RevLanguageFamilyCStyle,
+
+    /**
+     * Hash-style line comments:
+     *   - Line comments:   # ...
+     */
+    RevLanguageFamilyHashStyle,
+
+    /**
+     * Double-dash line comments:
+     *   - Line comments:   -- ...
+     *     (SQL, Haskell, etc.)
+     */
+    RevLanguageFamilyDoubleDash,
+
+    /**
+     * Semicolon line comments:
+     *   - Line comments:   ; ...
+     *     (some Lisps, assembly dialects, etc.)
+     */
+    RevLanguageFamilySemicolon,
+
+    /**
+     * Percent-style line comments:
+     *   - Line comments:   % ...
+     *     (TeX/LaTeX, MATLAB, Octave, PostScript, etc.)
+     */
+    RevLanguageFamilyPercent,
+
+    /**
+     * XML-style block comments:
+     *   - Block comments:  <!-- ... -->
+     *     (XML, HTML, XAML, XSLT, etc.)
+     */
+    RevLanguageFamilyXmlStyle,
+
+    /**
+     * Languages with no recognized comment syntax.
+     * Everything that is not whitespace is treated as code.
+     */
+    RevLanguageFamilyNoComments,
+
     RevLanguageFamilyMax
 } COMMENT_STYLE_FAMILY;
 
@@ -340,7 +384,9 @@ const PWCHAR ConsoleForegroundColors[] = {
 
 // @formatter:off
 
-/*
+/**
+ * This table stores the language-to-family mappings.
+ *
  * N.B. This table is intentionally small and data-driven.
  * Anything that does not match here is treated as C-style by default.
  */
@@ -355,15 +401,36 @@ COMMENT_STYLE_MAPPING LanguageFamilyMappingTable[] = {
     {L"PowerShell",     RevLanguageFamilyHashStyle},
     {L"Raku",           RevLanguageFamilyHashStyle},
     {L"awk",            RevLanguageFamilyHashStyle},
+
     {L"SQL",            RevLanguageFamilyDoubleDash},
     {L"Haskell",        RevLanguageFamilyDoubleDash},
+
     {L"Lisp",           RevLanguageFamilySemicolon},
     {L"Scheme",         RevLanguageFamilySemicolon},
     {L"Assembly",       RevLanguageFamilySemicolon},
+
+    //
+    // Percent-style languages.
+    //
+    {L"TeX",            RevLanguageFamilyPercent},
+    {L"LaTeX",          RevLanguageFamilyPercent},
+    {L"MATLAB",         RevLanguageFamilyPercent},
+    {L"Octave",         RevLanguageFamilyPercent},
+    {L"PostScript",     RevLanguageFamilyPercent},
+
+    //
+    // XML-style block comment languages.
+    // HTML is treated similarly here; script/style blocks aren't special-cased.
+    //
+    {L"XML",            RevLanguageFamilyXmlStyle},
+    {L"HTML",           RevLanguageFamilyXmlStyle},
+    {L"XHTML",          RevLanguageFamilyXmlStyle},
+    {L"XAML",           RevLanguageFamilyXmlStyle},
+    {L"XSLT",           RevLanguageFamilyXmlStyle},
 };
 
 /**
- * @brief Mapping of file extensions that can be recognized to
+ * Mapping of file extensions that can be recognized to
  * human-readable descriptions of file types.
  *
  * TODO: Multi-dot extensions are commented out, we need to add support
@@ -1418,14 +1485,14 @@ VOID
 RevCountLinesCStyle(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
-    _Inout_ PFILE_LINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS FileLineStats
     );
 
 VOID
 RevCountLinesHashStyle(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
-    _Inout_ PFILE_LINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS FileLineStats
     );
 
 VOID
@@ -1434,7 +1501,14 @@ RevCountLinesLineCommentStyle(
     _In_ SIZE_T Length,
     _In_ CHAR FirstCommentChar,
     _In_ CHAR SecondCommentChar,
-    _Inout_ PFILE_LINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS FileLineStats
+    );
+
+VOID
+RevCountLinesXmlStyle(
+    _In_reads_bytes_(Length) const CHAR *Buffer,
+    _In_ SIZE_T Length,
+    _Inout_ PFILE_LINE_STATS FileLineStats
     );
 
 VOID
@@ -1442,7 +1516,7 @@ RevCountLinesWithFamily(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
     _In_ COMMENT_STYLE_FAMILY LanguageFamily,
-    _Inout_ PFILE_LINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS FileLineStats
     );
 
 _Must_inspect_result_
@@ -2572,14 +2646,14 @@ RevShouldReviseFile(
  *
  * @param Length Supplies the length of Buffer in bytes.
  *
- * @param LineStats Supplies a pointer to a FILE_LINE_STATS structure that
+ * @param FileLineStats Supplies a pointer to a FILE_LINE_STATS structure that
  *        receives the results.
  */
 VOID
 RevCountLinesCStyle(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
-    _Inout_ PFILE_LINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS FileLineStats
     )
 {
     SIZE_T index = {0};
@@ -2591,13 +2665,13 @@ RevCountLinesCStyle(
     BOOL sawNonWhitespace = FALSE;
     BOOL previousWasCR = FALSE;
 
-    if (Buffer == NULL || LineStats == NULL || Length == 0) {
+    if (Buffer == NULL || FileLineStats == NULL || Length == 0) {
         return;
     }
 
-    LineStats->CountOfLinesTotal = 0;
-    LineStats->CountOfLinesBlank = 0;
-    LineStats->CountOfLinesComment = 0;
+    FileLineStats->CountOfLinesTotal = 0;
+    FileLineStats->CountOfLinesBlank = 0;
+    FileLineStats->CountOfLinesComment = 0;
 
     for (index = 0; index < Length; index += 1) {
 
@@ -2621,19 +2695,19 @@ RevCountLinesCStyle(
                 continue;
             }
 
-            LineStats->CountOfLinesTotal += 1;
+            FileLineStats->CountOfLinesTotal += 1;
 
             if (!sawNonWhitespace &&
                 !sawComment &&
                 !sawCode &&
                 !inBlockComment) {
 
-                LineStats->CountOfLinesBlank += 1;
+                FileLineStats->CountOfLinesBlank += 1;
 
             } else if (!sawCode &&
                        (sawComment || inBlockComment)) {
 
-                LineStats->CountOfLinesComment += 1;
+                FileLineStats->CountOfLinesComment += 1;
             }
 
             sawCode = FALSE;
@@ -2743,16 +2817,16 @@ RevCountLinesCStyle(
     //
     if (sawNonWhitespace || sawComment || sawCode || inBlockComment) {
 
-        LineStats->CountOfLinesTotal += 1;
+        FileLineStats->CountOfLinesTotal += 1;
 
         if (!sawNonWhitespace && !sawComment && !sawCode && !inBlockComment) {
 
-            LineStats->CountOfLinesBlank += 1;
+            FileLineStats->CountOfLinesBlank += 1;
 
         } else if (!sawCode &&
                    (sawComment || inBlockComment)) {
 
-            LineStats->CountOfLinesComment += 1;
+            FileLineStats->CountOfLinesComment += 1;
         }
     }
 }
@@ -2764,21 +2838,21 @@ RevCountLinesCStyle(
  *
  * @param Length Supplies the length of Buffer in bytes.
  *
- * @param LineStats Supplies a pointer to a FILE_LINE_STATS structure that
+ * @param FileLineStats Supplies a pointer to a FILE_LINE_STATS structure that
  *                  receives the results.
  */
 VOID
 RevCountLinesHashStyle(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
-    _Inout_ PFILE_LINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS FileLineStats
     )
 {
     RevCountLinesLineCommentStyle(Buffer,
                                   Length,
                                   '#',
                                   0,
-                                  LineStats);
+                                  FileLineStats);
 }
 
 /**
@@ -2804,7 +2878,7 @@ RevCountLinesHashStyle(
  * @param SecondCommentChar Supplies the second character of the comment
  *                          prefix, or 0 for a single-character prefix.
  *
- * @param LineStats Supplies a pointer to a FILE_LINE_STATS structure that
+ * @param FileLineStats Supplies a pointer to a FILE_LINE_STATS structure that
  *                  receives the results.
  */
 VOID
@@ -2813,7 +2887,7 @@ RevCountLinesLineCommentStyle(
     _In_ SIZE_T Length,
     _In_ CHAR FirstCommentChar,
     _In_ CHAR SecondCommentChar,
-    _Inout_ PFILE_LINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS FileLineStats
     )
 {
     SIZE_T index;
@@ -2825,13 +2899,13 @@ RevCountLinesLineCommentStyle(
     BOOL sawNonWhitespace = FALSE;
     BOOL previousWasCR = FALSE;
 
-    if (Buffer == NULL || LineStats == NULL || Length == 0) {
+    if (Buffer == NULL || FileLineStats == NULL || Length == 0) {
         return;
     }
 
-    LineStats->CountOfLinesTotal = 0;
-    LineStats->CountOfLinesBlank = 0;
-    LineStats->CountOfLinesComment = 0;
+    FileLineStats->CountOfLinesTotal = 0;
+    FileLineStats->CountOfLinesBlank = 0;
+    FileLineStats->CountOfLinesComment = 0;
 
     for (index = 0; index < Length; index += 1) {
 
@@ -2855,12 +2929,12 @@ RevCountLinesLineCommentStyle(
                 continue;
             }
 
-            LineStats->CountOfLinesTotal += 1;
+            FileLineStats->CountOfLinesTotal += 1;
 
             if (!sawNonWhitespace && !sawComment && !sawCode) {
-                LineStats->CountOfLinesBlank += 1;
+                FileLineStats->CountOfLinesBlank += 1;
             } else if (!sawCode && sawComment) {
-                LineStats->CountOfLinesComment += 1;
+                FileLineStats->CountOfLinesComment += 1;
             }
 
             sawCode = FALSE;
@@ -2960,13 +3034,193 @@ RevCountLinesLineCommentStyle(
     //
     if (sawNonWhitespace || sawComment || sawCode) {
 
-        LineStats->CountOfLinesTotal += 1;
+        FileLineStats->CountOfLinesTotal += 1;
 
         if (!sawNonWhitespace && !sawComment) {
-            LineStats->CountOfLinesBlank += 1;
+            FileLineStats->CountOfLinesBlank += 1;
 
         } else if (!sawCode && sawComment) {
-            LineStats->CountOfLinesComment += 1;
+            FileLineStats->CountOfLinesComment += 1;
+        }
+    }
+}
+
+/**
+ * @brief This function counts lines using XML-style block comments.
+ *
+ * Supported syntax:
+ *   - Block comments:  <!-- ... -->
+ *
+ * Everything outside comments (markup, text, attributes) is treated as code.
+ * There is no string-literal state here because XML comment delimiters
+ * cannot appear inside comments in a way that needs escaping like in C.
+ *
+ * Lines are classified as:
+ *   - Blank:   only whitespace.
+ *   - Comment: only comment text (no code tokens).
+ *   - Code:    any line that contains code, even if it also has comments.
+ *
+ * @param Buffer Supplies the file contents.
+ *
+ * @param Length Supplies the length of Buffer in bytes.
+ *
+ * @param FileLineStats Supplies a pointer to a FILE_LINE_STATS structure that
+ *                  receives the results.
+ */
+VOID
+RevCountLinesXmlStyle(
+    _In_reads_bytes_(Length) const CHAR *Buffer,
+    _In_ SIZE_T Length,
+    _Inout_ PFILE_LINE_STATS FileLineStats
+    )
+{
+    SIZE_T index;
+    BOOL inBlockComment = FALSE;
+    BOOL sawCode = FALSE;
+    BOOL sawComment = FALSE;
+    BOOL sawNonWhitespace = FALSE;
+    BOOL previousWasCR = FALSE;
+
+    if (Buffer == NULL || FileLineStats == NULL || Length == 0) {
+        return;
+    }
+
+    FileLineStats->CountOfLinesTotal = 0;
+    FileLineStats->CountOfLinesBlank = 0;
+    FileLineStats->CountOfLinesComment = 0;
+
+    for (index = 0; index < Length; index += 1) {
+
+        CHAR currentChar = Buffer[index];
+        CHAR nextChar;
+        CHAR thirdChar;
+        CHAR fourthChar;
+
+        if (index + 1 < Length) {
+            nextChar = Buffer[index + 1];
+        } else {
+            nextChar = 0;
+        }
+
+        if (index + 2 < Length) {
+            thirdChar = Buffer[index + 2];
+        } else {
+            thirdChar = 0;
+        }
+
+        if (index + 3 < Length) {
+            fourthChar = Buffer[index + 3];
+        } else {
+            fourthChar = 0;
+        }
+
+        //
+        // Handle CR and LF as line terminators, merge CRLF into a single
+        // logical newline.
+        //
+        if (currentChar == CARRIAGE_RETURN || currentChar == LINE_FEED) {
+
+            if (previousWasCR && currentChar == LINE_FEED) {
+                previousWasCR = FALSE;
+                continue;
+            }
+
+            FileLineStats->CountOfLinesTotal += 1;
+
+            if (!sawNonWhitespace &&
+                !sawComment &&
+                !sawCode &&
+                !inBlockComment) {
+
+                FileLineStats->CountOfLinesBlank += 1;
+
+            } else if (!sawCode &&
+                       (sawComment || inBlockComment)) {
+
+                FileLineStats->CountOfLinesComment += 1;
+            }
+
+            sawCode = FALSE;
+            sawComment = FALSE;
+            sawNonWhitespace = FALSE;
+
+            previousWasCR = (currentChar == CARRIAGE_RETURN);
+
+            continue;
+        }
+
+        previousWasCR = FALSE;
+
+        if (!isspace((UCHAR)currentChar)) {
+            sawNonWhitespace = TRUE;
+        }
+
+        //
+        // Inside an XML block comment: <!-- ... -->
+        //
+        if (inBlockComment) {
+            sawComment = TRUE;
+
+            if (currentChar == '-' &&
+                nextChar == '-' &&
+                thirdChar == '>') {
+
+                inBlockComment = FALSE;
+
+                //
+                // Consume "-->"
+                //
+                index += 2;
+            }
+
+            continue;
+        }
+
+        //
+        // Start of XML block comment: <!--
+        //
+        if (currentChar == '<' &&
+            nextChar == '!' &&
+            thirdChar == '-' &&
+            fourthChar == '-') {
+
+            inBlockComment = TRUE;
+            sawComment = TRUE;
+
+            //
+            // Skip "!--"
+            //
+            index += 3;
+            continue;
+        }
+
+        //
+        // Any other non-whitespace character outside comments
+        // is treated as code (markup or text).
+        //
+        if (!isspace((UCHAR)currentChar)) {
+            sawCode = TRUE;
+        }
+    }
+
+    //
+    // Handle the final line when the file does not end with a newline.
+    //
+    if (sawNonWhitespace || sawComment || sawCode || inBlockComment) {
+
+        FileLineStats->CountOfLinesTotal += 1;
+
+        if (!sawNonWhitespace &&
+            !sawComment &&
+            !sawCode &&
+            !inBlockComment) {
+
+            FileLineStats->CountOfLinesBlank += 1;
+
+        } else if (!sawCode &&
+                   (sawComment || inBlockComment)) {
+
+            FileLineStats->CountOfLinesComment += 1;
         }
     }
 }
@@ -2981,7 +3235,7 @@ RevCountLinesLineCommentStyle(
  * @param LanguageFamily Supplies the language family that determines
  *                       which comment syntax is used.
  *
- * @param LineStats Supplies a pointer to a FILE_LINE_STATS structure that
+ * @param FileLineStats Supplies a pointer to a FILE_LINE_STATS structure that
  *                  receives the results.
  */
 VOID
@@ -2989,7 +3243,7 @@ RevCountLinesWithFamily(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
     _In_ COMMENT_STYLE_FAMILY LanguageFamily,
-    _Inout_ PFILE_LINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS FileLineStats
     )
 {
     switch (LanguageFamily) {
@@ -3000,7 +3254,7 @@ RevCountLinesWithFamily(
         //
         RevCountLinesHashStyle(Buffer,
                                Length,
-                               LineStats);
+                               FileLineStats);
         break;
 
     case RevLanguageFamilyDoubleDash:
@@ -3011,7 +3265,7 @@ RevCountLinesWithFamily(
                                       Length,
                                       '-',
                                       '-',
-                                      LineStats);
+                                      FileLineStats);
         break;
 
     case RevLanguageFamilySemicolon:
@@ -3022,7 +3276,40 @@ RevCountLinesWithFamily(
                                       Length,
                                       ';',
                                       0,
-                                      LineStats);
+                                      FileLineStats);
+        break;
+
+    case RevLanguageFamilyPercent:
+        //
+        // Languages with "%" line comments.
+        //
+        RevCountLinesLineCommentStyle(Buffer,
+                                      Length,
+                                      '%',
+                                      0,
+                                      FileLineStats);
+        break;
+
+    case RevLanguageFamilyXmlStyle:
+        //
+        // Languages with XML-style block comments: <!-- ... -->
+        //
+        RevCountLinesXmlStyle(Buffer,
+                              Length,
+                              FileLineStats);
+        break;
+
+    case RevLanguageFamilyNoComments:
+        //
+        // Languages that should not treat any characters as comments.
+        // We reuse the generic line-comment scanner with a NUL prefix,
+        // which effectively never matches in text files.
+        //
+        RevCountLinesLineCommentStyle(Buffer,
+                                      Length,
+                                      0,
+                                      0,
+                                      FileLineStats);
         break;
 
     case RevLanguageFamilyCStyle:
@@ -3033,7 +3320,7 @@ RevCountLinesWithFamily(
         //
         RevCountLinesCStyle(Buffer,
                             Length,
-                            LineStats);
+                            FileLineStats);
         break;
     }
 }
