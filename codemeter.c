@@ -1481,15 +1481,28 @@ RevFindRevisionRecordForLanguageByExtension(
     _In_z_ PWCHAR Extension
     );
 
+FORCEINLINE
 VOID
-RevCountLinesCStyle(
-    _In_reads_bytes_(Length) const CHAR *Buffer,
-    _In_ SIZE_T Length,
+RevClassifyCompletedLine(
+    _In_ BOOL SawNonWhitespace,
+    _In_ BOOL SawCode,
+    _In_ BOOL SawComment,
+    _In_ BOOL InBlockComment,
+    _Inout_ PFILE_LINE_STATS FileLineStats
+    );
+
+FORCEINLINE
+VOID
+RevMaybeClassifyLastLine(
+    _In_ BOOL SawNonWhitespace,
+    _In_ BOOL SawCode,
+    _In_ BOOL SawComment,
+    _In_ BOOL InBlockComment,
     _Inout_ PFILE_LINE_STATS FileLineStats
     );
 
 VOID
-RevCountLinesHashStyle(
+RevCountLinesCStyle(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
     _Inout_ PFILE_LINE_STATS FileLineStats
@@ -2644,7 +2657,7 @@ RevShouldReviseFile(
  * @param InBlockComment TRUE if we are currently inside a block comment.
  * @param FileLineStats Receives updated counts.
  */
-static
+FORCEINLINE
 VOID
 RevClassifyCompletedLine(
     _In_ BOOL SawNonWhitespace,
@@ -2680,7 +2693,7 @@ RevClassifyCompletedLine(
  * @param InBlockComment TRUE if we are currently inside a block comment.
  * @param FileLineStats Receives updated counts.
  */
-static
+FORCEINLINE
 VOID
 RevMaybeClassifyLastLine(
     _In_ BOOL SawNonWhitespace,
@@ -2887,30 +2900,6 @@ RevCountLinesCStyle(
 }
 
 /**
- * This function counts lines using hash-style comments ("# ...").
- *
- * @param Buffer Supplies the file contents.
- *
- * @param Length Supplies the length of Buffer in bytes.
- *
- * @param FileLineStats Supplies a pointer to a FILE_LINE_STATS structure that
- *                  receives the results.
- */
-VOID
-RevCountLinesHashStyle(
-    _In_reads_bytes_(Length) const CHAR *Buffer,
-    _In_ SIZE_T Length,
-    _Inout_ PFILE_LINE_STATS FileLineStats
-    )
-{
-    RevCountLinesLineCommentStyle(Buffer,
-                                  Length,
-                                  '#',
-                                  0,
-                                  FileLineStats);
-}
-
-/**
  * @brief This function is a helper that counts lines for languages that
  *        use only line comments with a fixed prefix (e.g. '#', ';', '--').
  *
@@ -2984,10 +2973,13 @@ RevCountLinesLineCommentStyle(
                 continue;
             }
 
+            //
+            // N.B. No block comment state.
+            //
             RevClassifyCompletedLine(sawNonWhitespace,
                                      sawCode,
                                      sawComment,
-                                     FALSE,        // no block comment state
+                                     FALSE,
                                      FileLineStats);
 
             sawCode = FALSE;
@@ -3280,9 +3272,11 @@ RevCountLinesWithFamily(
         //
         // Languages with "#" line comments.
         //
-        RevCountLinesHashStyle(Buffer,
-                               Length,
-                               FileLineStats);
+        RevCountLinesLineCommentStyle(Buffer,
+                                      Length,
+                                      '#',
+                                      0,
+                                      FileLineStats);
         break;
 
     case RevLanguageFamilyDoubleDash:
@@ -3373,58 +3367,32 @@ RevReviseFile(
 {
     BOOL status = TRUE;
     PREVISION_RECORD revisionRecord = NULL;
-    HANDLE file = INVALID_HANDLE_VALUE;
-    LARGE_INTEGER fileSize;
+    FILE_LINE_STATS fileLineStats = {0};
     PCHAR fileBuffer = NULL;
     DWORD fileBufferSize = 0;
-    DWORD bytesRead = 0;
     PWCHAR fileExtension = NULL;
+    HANDLE file = INVALID_HANDLE_VALUE;
+    LARGE_INTEGER fileSize;
+    DWORD bytesRead = 0;
     PWCHAR languageOrFileType = NULL;
-    COMMENT_STYLE_FAMILY languageFamily = RevLanguageFamilyUnknown;
-    FILE_LINE_STATS fileLineStats = {0};
+    COMMENT_STYLE_FAMILY languageFamily;
 
     if (FilePath == NULL) {
-        RevLogError("FilePath is NULL.");
+        RevLogError("RevReviseFile received NULL FilePath.");
         status = FALSE;
         goto Exit;
     }
-
-    //
-    // Determine the file extension and mapping before reading.
-    //
-    fileExtension = wcsrchr(FilePath, L'.');
-    if (fileExtension == NULL) {
-        RevLogWarning("Failed to determine the extension for the file \"%ls\".",
-                      FilePath);
-        status = FALSE;
-        goto Exit;
-    }
-
-    languageOrFileType = RevMapExtensionToLanguage(fileExtension);
-
-    if (languageOrFileType == NULL) {
-        //
-        // Should not normally reach here because RevShouldReviseFile()
-        // already filtered by extension.
-        //
-        RevLogWarning("No language mapping found for extension \"%ls\".",
-                      fileExtension);
-        status = FALSE;
-        goto Exit;
-    }
-
-    languageFamily = RevGetLanguageFamily(languageOrFileType);
 
     //
     // Attempt to open the file.
     //
-    file = CreateFile(FilePath,
-                      GENERIC_READ,
-                      FILE_SHARE_READ,
-                      NULL,
-                      OPEN_EXISTING,
-                      FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
-                      NULL);
+    file = CreateFileW(FilePath,
+                       GENERIC_READ,
+                       FILE_SHARE_READ,
+                       NULL,
+                       OPEN_EXISTING,
+                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+                       NULL);
 
     if (file == INVALID_HANDLE_VALUE) {
         RevLogError("Failed to open the file \"%ls\". Error: %ls.",
@@ -3435,7 +3403,7 @@ RevReviseFile(
     }
 
     //
-    // Retrieve the size of the file
+    // Retrieve the size of the file.
     //
     if (!GetFileSizeEx(file, &fileSize)) {
         RevLogError("Failed to retrieve the size of the file \"%ls\". "
@@ -3447,24 +3415,23 @@ RevReviseFile(
     }
 
     //
-    // Empty file, nothing to count.
+    // Handle empty files: they contribute zero lines, but we still update
+    // the per-language record and global file counters.
     //
     if (fileSize.QuadPart == 0) {
         goto UpdateStats;
     }
 
     //
-    // Allocate buffer for the entire file.
-    // N.B. Currently, reading only ANSI files is supported, so the read buffer
-    // is allocated using sizeof(CHAR).
+    // For now we do not support files larger than 4 GiB.
     //
     if (fileSize.QuadPart > MAXDWORD) {
-        RevLogError("File \"%ls\" is too large (%lld bytes) "
-                    "for single-buffer read.",
-                    FilePath,
-                    fileSize.QuadPart);
-        status = FALSE;
-        goto Exit;
+        RevLogWarning("Skipping file \"%ls\" because its size (%lld bytes) "
+                      "exceeds the supported limit.",
+                      FilePath,
+                      fileSize.QuadPart);
+        status = TRUE;
+        goto UpdateStats;
     }
 
     fileBufferSize = (DWORD)fileSize.QuadPart;
@@ -3472,22 +3439,19 @@ RevReviseFile(
     fileBuffer = (PCHAR)malloc(fileBufferSize);
 
     if (fileBuffer == NULL) {
-        RevLogError("Failed to allocate %llu bytes for file buffer",
-                    fileSize.QuadPart * sizeof(CHAR));
+        RevLogError("Failed to allocate %lu bytes for the file buffer.",
+                    fileBufferSize);
         status = FALSE;
         goto Exit;
     }
 
-    //
-    // Read entire file contents into buffer.
-    //
     if (!ReadFile(file,
                   fileBuffer,
                   fileBufferSize,
                   &bytesRead,
                   NULL)) {
 
-        RevLogError("Failed to read file \"%ls\". Error: %ls.",
+        RevLogError("Failed to read the file \"%ls\". Error: %ls.",
                     FilePath,
                     RevGetLastKnownWin32Error());
         status = FALSE;
@@ -3496,51 +3460,123 @@ RevReviseFile(
 
     if (bytesRead == 0) {
         //
-        // Nothing read, treat as empty.
+        // Treat as an empty file.
         //
         goto UpdateStats;
     }
 
     //
-    // Count lines using a language family-aware strategy.
+    // Determine the file extension (everything after the last '.').
     //
-    RevCountLinesWithFamily(fileBuffer,
-                            bytesRead,
-                            languageFamily,
-                            &fileLineStats);
+    fileExtension = wcsrchr(FilePath, L'.');
+
+    if (fileExtension == NULL) {
+        RevLogWarning("Failed to extract file extension from \"%ls\".",
+                      FilePath);
+        goto UpdateStats;
+    }
+
+    //
+    // Map extension to language/file type string.
+    //
+    languageOrFileType = RevMapExtensionToLanguage(fileExtension);
+
+    if (languageOrFileType == NULL) {
+        //
+        // This should not normally happen because RevShouldReviseFile()
+        // is consulted before calling RevReviseFile(), but we still
+        // handle it gracefully.
+        //
+        RevLogWarning("No language mapping found for extension \"%ls\".",
+                      fileExtension);
+        goto UpdateStats;
+    }
+
+    //
+    // Determine the comment style family for the language.
+    //
+    languageFamily = RevGetLanguageFamily(languageOrFileType);
+
+    //
+    // Basic BOM handling.
+    //
+    {
+        SIZE_T offset = 0;
+        SIZE_T effectiveLength = bytesRead;
+
+        if (effectiveLength >= 3 &&
+            (UCHAR)fileBuffer[0] == 0xEF &&
+            (UCHAR)fileBuffer[1] == 0xBB &&
+            (UCHAR)fileBuffer[2] == 0xBF) {
+
+            //
+            // UTF-8 BOM: skip it.
+            //
+            offset = 3;
+            effectiveLength -= 3;
+        } else if (effectiveLength >= 2) {
+
+            UCHAR b0 = (UCHAR)fileBuffer[0];
+            UCHAR b1 = (UCHAR)fileBuffer[1];
+
+            if ((b0 == 0xFF && b1 == 0xFE) ||
+                (b0 == 0xFE && b1 == 0xFF)) {
+
+                //
+                // UTF-16 BOM: we do not currently support wide-character
+                // files here. Treat as unsupported text and do not count
+                // any lines.
+                //
+                RevLogWarning("File \"%ls\" appears to be UTF-16 encoded; "
+                              "skipping line counting for now.",
+                              FilePath);
+                goto UpdateStats;
+            }
+        }
+
+        if (effectiveLength > 0) {
+            RevCountLinesWithFamily(fileBuffer + offset,
+                                    effectiveLength,
+                                    languageFamily,
+                                    &fileLineStats);
+        }
+    }
 
 UpdateStats:
 
     //
-    // If there is a revision record for that language/file type in the revision
-    // record list, we'll update it. If this file type hasn't been encountered,
-    // we create a new node for it in the list.
+    // Find or create a revision record for the given extension/language.
     //
     revisionRecord = RevFindRevisionRecordForLanguageByExtension(fileExtension);
-
     if (revisionRecord == NULL) {
-        RevLogError("Failed to find/initialize the revision record for the file"
-                    " extension \"%ls\".",
-                    fileExtension);
-        status = FALSE;
-        goto Exit;
+
+        revisionRecord = RevInitializeRevisionRecord(fileExtension,
+                                                     languageOrFileType);
+        if (revisionRecord == NULL) {
+            RevLogError("Failed to initialize a revision record for \"%ls\".",
+                        fileExtension);
+            status = FALSE;
+            goto Exit;
+        }
     }
 
     //
-    // Update the stats for the extension.
+    // Update per-language statistics.
     //
+    revisionRecord->CountOfFiles += 1;
     revisionRecord->CountOfLinesTotal += fileLineStats.CountOfLinesTotal;
     revisionRecord->CountOfLinesBlank += fileLineStats.CountOfLinesBlank;
     revisionRecord->CountOfLinesComment += fileLineStats.CountOfLinesComment;
-    revisionRecord->CountOfFiles += 1;
 
     //
-    // Update the stats for the entire revision.
+    // Update global statistics.
     //
-    Revision->CountOfLinesTotal += fileLineStats.CountOfLinesTotal;
-    Revision->CountOfLinesBlank += fileLineStats.CountOfLinesBlank;
-    Revision->CountOfLinesComment += fileLineStats.CountOfLinesComment;
-    Revision->CountOfFiles += 1;
+    if (Revision != NULL) {
+        Revision->CountOfFiles += 1;
+        Revision->CountOfLinesTotal += fileLineStats.CountOfLinesTotal;
+        Revision->CountOfLinesBlank += fileLineStats.CountOfLinesBlank;
+        Revision->CountOfLinesComment += fileLineStats.CountOfLinesComment;
+    }
 
 Exit:
 
@@ -3548,13 +3584,9 @@ Exit:
         CloseHandle(file);
     }
 
-    if (fileBuffer) {
+    if (fileBuffer != NULL) {
         free(fileBuffer);
     }
-
-    //
-    // N.B. Don't free FilePath here, it's managed by the caller.
-    //
 
     return status;
 }
