@@ -218,6 +218,46 @@ typedef struct FILE_LINE_STATS {
 } FILE_LINE_STATS, *PFILE_LINE_STATS;
 
 /**
+ * This structure describes a view over the raw file buffer that should
+ * be used for line counting.
+ */
+typedef struct FILE_BUFFER_VIEW {
+    /**
+     * Allocated buffer containing the file bytes.
+     */
+    PCHAR Buffer;
+
+    /**
+     * Number of bytes allocated in Buffer.
+     */
+    DWORD BufferSize;
+
+    /**
+     * Number of bytes actually read from the disk.
+     */
+    DWORD DataLength;
+
+    /**
+     * Byte offset into Buffer where the meaningful text starts
+     * (e.g., after a BOM).
+     */
+    DWORD ContentOffset;
+
+    /**
+     * Number of bytes of the meaningful text starting at
+     * Buffer + ContentOffset.
+     */
+    DWORD ContentLength;
+
+    /**
+     * TRUE if the content appears to be text in a supported encoding
+     * (ANSI/UTF-8), FALSE if it appears to be binary or in an
+     * unsupported encoding (e.g., UTF-16).
+     */
+    BOOL IsText;
+} FILE_BUFFER_VIEW, *PFILE_BUFFER_VIEW;
+
+/**
  * This enumeration represents logical "language families" used for
  * comment parsing.
  */
@@ -1445,6 +1485,13 @@ RevInitializeExtensionHashTable(
 
 _Must_inspect_result_
 BOOL
+RevReadFileIntoBufferView(
+    _In_z_ PWCHAR FilePath,
+    _Out_ PFILE_BUFFER_VIEW View
+    );
+
+_Must_inspect_result_
+BOOL
 RevInitializeRevision(
     _In_ PREVISION_CONFIG InitParams
     );
@@ -1984,6 +2031,228 @@ RevInitializeExtensionHashTable(
     }
 
     RevExtensionHashTableInitialized = TRUE;
+}
+
+/**
+ * @brief Read the entire file into memory and construct a buffer view
+ *        suitable for line counting.
+ *
+ * @param FilePath Supplies the path to the file to be read.
+ *
+ * @param View Receives the buffer view description.
+ *
+ * @return TRUE if succeeded, FALSE if failed.
+ *
+ * @remarks On success, View is initialized and the caller
+ *          is responsible for freeing View->Buffer using free().
+ */
+_Must_inspect_result_
+BOOL
+RevReadFileIntoBufferView(
+    _In_z_ PWCHAR FilePath,
+    _Out_ PFILE_BUFFER_VIEW View
+    )
+{
+    BOOL status = TRUE;
+    HANDLE file = INVALID_HANDLE_VALUE;
+    LARGE_INTEGER fileSize;
+    DWORD bytesRead = 0;
+
+    if (FilePath == NULL || View == NULL) {
+        RevLogError("RevReadFileIntoBufferView received invalid parameter/-s.");
+        return FALSE;
+    }
+
+    ZeroMemory(View, sizeof(*View));
+
+    //
+    // Open the file for read-only access.
+    //
+    file = CreateFileW(FilePath,
+                       GENERIC_READ,
+                       FILE_SHARE_READ,
+                       NULL,
+                       OPEN_EXISTING,
+                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+                       NULL);
+
+    if (file == INVALID_HANDLE_VALUE) {
+        RevLogError("Failed to open the file \"%ls\". Error: %ls.",
+                    FilePath,
+                    RevGetLastKnownWin32Error());
+        status = FALSE;
+        goto Exit;
+    }
+
+    //
+    // Obtain its size.
+    //
+    if (!GetFileSizeEx(file, &fileSize)) {
+
+        RevLogError("Failed to retrieve the size of the file \"%ls\". "
+                    "The last known error: %ls.",
+                    FilePath,
+                    RevGetLastKnownWin32Error());
+        status = FALSE;
+        goto Exit;
+    }
+
+    //
+    // Empty file: nothing to read, but this is not an error.
+    //
+    if (fileSize.QuadPart == 0) {
+        View->Buffer = NULL;
+        View->BufferSize = 0;
+        View->DataLength = 0;
+        View->ContentOffset = 0;
+        View->ContentLength = 0;
+        View->IsText = TRUE;
+        goto Exit;
+    }
+
+    //
+    // For now, we do not support reading files larger than 4 GiB into a
+    // single buffer. They are simply skipped for counting purposes.
+    //
+    if (fileSize.QuadPart > MAXDWORD) {
+        RevLogWarning("Skipping file \"%ls\" because its size (%lld bytes) "
+                      "exceeds the supported limit.",
+                      FilePath,
+                      fileSize.QuadPart);
+        View->IsText = FALSE;
+        goto Exit;
+    }
+
+    View->BufferSize = (DWORD)fileSize.QuadPart;
+    View->Buffer = (PCHAR)malloc(View->BufferSize);
+
+    if (View->Buffer == NULL) {
+        RevLogError("Failed to allocate %llu bytes for file buffer.",
+                    fileSize.QuadPart * sizeof(CHAR));
+        status = FALSE;
+        goto Exit;
+    }
+
+    //
+    // Read the entire content into a heap buffer.
+    //
+    if (!ReadFile(file,
+                  View->Buffer,
+                  View->BufferSize,
+                  &bytesRead,
+                  NULL)) {
+
+        RevLogError("Failed to read the file \"%ls\". Error: %ls.",
+                    FilePath,
+                    RevGetLastKnownWin32Error());
+        status = FALSE;
+        goto Exit;
+    }
+
+    View->DataLength = bytesRead;
+
+    if (bytesRead == 0) {
+        //
+        // Treat as empty file.
+        //
+        View->ContentOffset = 0;
+        View->ContentLength = 0;
+        View->IsText = TRUE;
+        goto Exit;
+    }
+
+    //
+    // BOM / encoding detection.
+    //
+    {
+        DWORD offset = 0;
+
+        if (bytesRead >= 3 &&
+            (UCHAR)View->Buffer[0] == 0xEF &&
+            (UCHAR)View->Buffer[1] == 0xBB &&
+            (UCHAR)View->Buffer[2] == 0xBF) {
+
+            //
+            // UTF-8 BOM.
+            //
+            offset = 3;
+
+        } else if (bytesRead >= 2) {
+
+            UCHAR b0 = (UCHAR)View->Buffer[0];
+            UCHAR b1 = (UCHAR)View->Buffer[1];
+
+            if ((b0 == 0xFF && b1 == 0xFE) ||
+                (b0 == 0xFE && b1 == 0xFF)) {
+
+                //
+                // UTF-16 BOM: currently unsupported for parsing; we do not
+                // attempt to convert to UTF-8 here.
+                //
+                RevLogWarning("File \"%ls\" appears to be UTF-16 encoded; "
+                              "skipping line counting for this file.",
+                              FilePath);
+
+                View->IsText = FALSE;
+                View->ContentOffset = 0;
+                View->ContentLength = 0;
+                goto Exit;
+            }
+        }
+
+        View->ContentOffset = offset;
+        View->ContentLength =
+            (bytesRead > offset) ? (bytesRead - offset) : 0;
+    }
+
+    //
+    // Simple binary heuristic: if the first few KBs contain NUL bytes,
+    // assume this is a binary file and skip counting.
+    //
+    if (View->ContentLength > 0) {
+
+        DWORD inspectLength;
+
+        if (View->ContentLength < 4096) {
+            inspectLength = View->ContentLength;
+        } else {
+            inspectLength = 4096;
+        }
+
+        DWORD index;
+
+        for (index = 0; index < inspectLength; index += 1) {
+
+            if (View->Buffer[View->ContentOffset + index] == '\0') {
+
+                RevLogWarning("File \"%ls\" appears to be binary; "
+                              "skipping line counting for this file.",
+                              FilePath);
+
+                View->IsText = FALSE;
+                View->ContentLength = 0;
+
+                goto Exit;
+            }
+        }
+    }
+
+    View->IsText = TRUE;
+
+Exit:
+
+    if (file != INVALID_HANDLE_VALUE) {
+        CloseHandle(file);
+    }
+
+    if (!status) {
+        if (View->Buffer != NULL) {
+            free(View->Buffer);
+        }
+        ZeroMemory(View, sizeof(*View));
+    }
+
+    return status;
 }
 
 /**
@@ -3450,179 +3719,65 @@ RevReviseFile(
 {
     BOOL status = TRUE;
     PREVISION_RECORD revisionRecord = NULL;
-    FILE_LINE_STATS fileLineStats = {0};
-    PCHAR fileBuffer = NULL;
-    DWORD fileBufferSize = 0;
     PWCHAR fileExtension = NULL;
-    HANDLE file = INVALID_HANDLE_VALUE;
-    LARGE_INTEGER fileSize;
-    DWORD bytesRead = 0;
     PWCHAR languageOrFileType = NULL;
-    COMMENT_STYLE_FAMILY languageFamily;
+    COMMENT_STYLE_FAMILY languageFamily = RevLanguageFamilyUnknown;
+    FILE_LINE_STATS fileLineStats = {0};
+    FILE_BUFFER_VIEW view;
 
     if (FilePath == NULL) {
-        RevLogError("RevReviseFile received NULL FilePath.");
+        RevLogError("FilePath is NULL.");
         status = FALSE;
         goto Exit;
     }
 
     //
-    // Attempt to open the file.
-    //
-    file = CreateFileW(FilePath,
-                       GENERIC_READ,
-                       FILE_SHARE_READ,
-                       NULL,
-                       OPEN_EXISTING,
-                       FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
-                       NULL);
-
-    if (file == INVALID_HANDLE_VALUE) {
-        RevLogError("Failed to open the file \"%ls\". Error: %ls.",
-                    FilePath,
-                    RevGetLastKnownWin32Error());
-        status = FALSE;
-        goto Exit;
-    }
-
-    //
-    // Retrieve the size of the file.
-    //
-    if (!GetFileSizeEx(file, &fileSize)) {
-        RevLogError("Failed to retrieve the size of the file \"%ls\". "
-                    "The last known error: %ls.",
-                    FilePath,
-                    RevGetLastKnownWin32Error());
-        status = FALSE;
-        goto Exit;
-    }
-
-    //
-    // Handle empty files: they contribute zero lines, but we still update
-    // the per-language record and global file counters.
-    //
-    if (fileSize.QuadPart == 0) {
-        goto UpdateStats;
-    }
-
-    //
-    // For now we do not support files larger than 4 GiB.
-    //
-    if (fileSize.QuadPart > MAXDWORD) {
-        RevLogWarning("Skipping file \"%ls\" because its size (%lld bytes) "
-                      "exceeds the supported limit.",
-                      FilePath,
-                      fileSize.QuadPart);
-        status = TRUE;
-        goto UpdateStats;
-    }
-
-    fileBufferSize = (DWORD)fileSize.QuadPart;
-
-    fileBuffer = (PCHAR)malloc(fileBufferSize);
-
-    if (fileBuffer == NULL) {
-        RevLogError("Failed to allocate %lu bytes for the file buffer.",
-                    fileBufferSize);
-        status = FALSE;
-        goto Exit;
-    }
-
-    if (!ReadFile(file,
-                  fileBuffer,
-                  fileBufferSize,
-                  &bytesRead,
-                  NULL)) {
-
-        RevLogError("Failed to read the file \"%ls\". Error: %ls.",
-                    FilePath,
-                    RevGetLastKnownWin32Error());
-        status = FALSE;
-        goto Exit;
-    }
-
-    if (bytesRead == 0) {
-        //
-        // Treat as an empty file.
-        //
-        goto UpdateStats;
-    }
-
-    //
-    // Determine the file extension (everything after the last '.').
+    // Determine the file extension and mapping before reading.
     //
     fileExtension = wcsrchr(FilePath, L'.');
-
     if (fileExtension == NULL) {
-        RevLogWarning("Failed to extract file extension from \"%ls\".",
+        RevLogWarning("Failed to determine the extension for the file \"%ls\".",
                       FilePath);
+        status = FALSE;
         goto UpdateStats;
     }
 
-    //
-    // Map extension to language/file type string.
-    //
     languageOrFileType = RevMapExtensionToLanguage(fileExtension);
-
     if (languageOrFileType == NULL) {
         //
-        // This should not normally happen because RevShouldReviseFile()
-        // is consulted before calling RevReviseFile(), but we still
-        // handle it gracefully.
+        // Should not normally reach here because RevShouldReviseFile()
+        // already filtered by extension.
         //
         RevLogWarning("No language mapping found for extension \"%ls\".",
                       fileExtension);
+        status = FALSE;
+        goto UpdateStats;
+    }
+
+    languageFamily = RevGetLanguageFamily(languageOrFileType);
+
+    //
+    // Read the file into a buffer view.
+    //
+    if (!RevReadFileIntoBufferView(FilePath, &view)) {
+        //
+        // Errors already logged by the helper. Do not propagate as fatal
+        // for the entire revision; behave like a per-file failure.
+        //
+        status = FALSE;
         goto UpdateStats;
     }
 
     //
-    // Determine the comment style family for the language.
+    // If the content is recognized as text and there is something to
+    // revise, count lines.
     //
-    languageFamily = RevGetLanguageFamily(languageOrFileType);
+    if (view.IsText && view.ContentLength > 0) {
 
-    //
-    // Basic BOM handling.
-    //
-    {
-        SIZE_T offset = 0;
-        SIZE_T effectiveLength = bytesRead;
-
-        if (effectiveLength >= 3 &&
-            (UCHAR)fileBuffer[0] == 0xEF &&
-            (UCHAR)fileBuffer[1] == 0xBB &&
-            (UCHAR)fileBuffer[2] == 0xBF) {
-
-            //
-            // UTF-8 BOM: skip it.
-            //
-            offset = 3;
-            effectiveLength -= 3;
-        } else if (effectiveLength >= 2) {
-
-            UCHAR b0 = (UCHAR)fileBuffer[0];
-            UCHAR b1 = (UCHAR)fileBuffer[1];
-
-            if ((b0 == 0xFF && b1 == 0xFE) ||
-                (b0 == 0xFE && b1 == 0xFF)) {
-
-                //
-                // UTF-16 BOM: we do not currently support wide-character
-                // files here. Treat as unsupported text and do not count
-                // any lines.
-                //
-                RevLogWarning("File \"%ls\" appears to be UTF-16 encoded; "
-                              "skipping line counting for now.",
-                              FilePath);
-                goto UpdateStats;
-            }
-        }
-
-        if (effectiveLength > 0) {
-            RevCountLinesWithFamily(fileBuffer + offset,
-                                    effectiveLength,
-                                    languageFamily,
-                                    &fileLineStats);
-        }
+        RevCountLinesWithFamily(view.Buffer + view.ContentOffset,
+                                view.ContentLength,
+                                languageFamily,
+                                &fileLineStats);
     }
 
 UpdateStats:
