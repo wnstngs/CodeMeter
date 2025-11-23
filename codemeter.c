@@ -1539,7 +1539,7 @@ RevRevisionFileVisitor(
 _Must_inspect_result_
 BOOL
 RevShouldReviseFile(
-    _In_z_ PWCHAR FileName
+    _In_z_ const WCHAR *FileName
     );
 
 _Must_inspect_result_
@@ -2597,7 +2597,7 @@ RevRevisionFileVisitor(
 _Must_inspect_result_
 BOOL
 RevShouldReviseFile(
-    _In_z_ PWCHAR FileName
+    _In_z_ const WCHAR *FileName
     )
 {
     PWCHAR fileExtension = NULL;
@@ -2630,6 +2630,79 @@ RevShouldReviseFile(
 }
 
 /**
+ * @brief Classifies a fully completed logical line and updates statistics.
+ *
+ * A line is considered:
+ *   - Blank:   only whitespace, and not inside a block comment.
+ *   - Comment: only comment text or still inside a block comment, with no code.
+ *   - Code:    any line that contains code; comment text on the same line
+ *              does not change it from code to comment.
+ *
+ * @param SawNonWhitespace TRUE if the line contained any non-whitespace char.
+ * @param SawCode TRUE if the line contained any code outside comments.
+ * @param SawComment TRUE if the line contained any comment characters.
+ * @param InBlockComment TRUE if we are currently inside a block comment.
+ * @param FileLineStats Receives updated counts.
+ */
+static
+VOID
+RevClassifyCompletedLine(
+    _In_ BOOL SawNonWhitespace,
+    _In_ BOOL SawCode,
+    _In_ BOOL SawComment,
+    _In_ BOOL InBlockComment,
+    _Inout_ PFILE_LINE_STATS FileLineStats
+    )
+{
+    FileLineStats->CountOfLinesTotal += 1;
+
+    if (!SawNonWhitespace &&
+        !SawCode &&
+        !SawComment &&
+        !InBlockComment) {
+
+        FileLineStats->CountOfLinesBlank += 1;
+
+    } else if (!SawCode &&
+               (SawComment || InBlockComment)) {
+
+        FileLineStats->CountOfLinesComment += 1;
+    }
+}
+
+/**
+ * @brief Optionally classifies the last line of a file when there is no
+ *        terminating newline.
+ *
+ * @param SawNonWhitespace  TRUE if the line contained any non-whitespace char.
+ * @param SawCode TRUE if the line contained any code outside comments.
+ * @param SawComment TRUE if the line contained any comment characters.
+ * @param InBlockComment TRUE if we are currently inside a block comment.
+ * @param FileLineStats Receives updated counts.
+ */
+static
+VOID
+RevMaybeClassifyLastLine(
+    _In_ BOOL SawNonWhitespace,
+    _In_ BOOL SawCode,
+    _In_ BOOL SawComment,
+    _In_ BOOL InBlockComment,
+    _Inout_ PFILE_LINE_STATS FileLineStats
+    )
+{
+    //
+    // For languages without block comments, InBlockComment is always FALSE.
+    //
+    if (SawNonWhitespace || SawCode || SawComment || InBlockComment) {
+        RevClassifyCompletedLine(SawNonWhitespace,
+                                 SawCode,
+                                 SawComment,
+                                 InBlockComment,
+                                 FileLineStats);
+    }
+}
+
+/**
  * @brief This function counts lines using C-style comments.
  *
  * Supported syntax:
@@ -2656,7 +2729,7 @@ RevCountLinesCStyle(
     _Inout_ PFILE_LINE_STATS FileLineStats
     )
 {
-    SIZE_T index = {0};
+    SIZE_T index;
     BOOL inBlockComment = FALSE;
     BOOL inString = FALSE;
     CHAR stringDelim = 0;
@@ -2695,20 +2768,11 @@ RevCountLinesCStyle(
                 continue;
             }
 
-            FileLineStats->CountOfLinesTotal += 1;
-
-            if (!sawNonWhitespace &&
-                !sawComment &&
-                !sawCode &&
-                !inBlockComment) {
-
-                FileLineStats->CountOfLinesBlank += 1;
-
-            } else if (!sawCode &&
-                       (sawComment || inBlockComment)) {
-
-                FileLineStats->CountOfLinesComment += 1;
-            }
+            RevClassifyCompletedLine(sawNonWhitespace,
+                                     sawCode,
+                                     sawComment,
+                                     inBlockComment,
+                                     FileLineStats);
 
             sawCode = FALSE;
             sawComment = FALSE;
@@ -2781,7 +2845,7 @@ RevCountLinesCStyle(
         }
 
         //
-        // Block comment: /* ... *\/
+        // Block comment: /* ... */
         //
         if (currentChar == '/' && nextChar == '*') {
             //
@@ -2815,20 +2879,11 @@ RevCountLinesCStyle(
     //
     // Handle the final line when the file does not end with a newline.
     //
-    if (sawNonWhitespace || sawComment || sawCode || inBlockComment) {
-
-        FileLineStats->CountOfLinesTotal += 1;
-
-        if (!sawNonWhitespace && !sawComment && !sawCode && !inBlockComment) {
-
-            FileLineStats->CountOfLinesBlank += 1;
-
-        } else if (!sawCode &&
-                   (sawComment || inBlockComment)) {
-
-            FileLineStats->CountOfLinesComment += 1;
-        }
-    }
+    RevMaybeClassifyLastLine(sawNonWhitespace,
+                             sawCode,
+                             sawComment,
+                             inBlockComment,
+                             FileLineStats);
 }
 
 /**
@@ -2929,13 +2984,11 @@ RevCountLinesLineCommentStyle(
                 continue;
             }
 
-            FileLineStats->CountOfLinesTotal += 1;
-
-            if (!sawNonWhitespace && !sawComment && !sawCode) {
-                FileLineStats->CountOfLinesBlank += 1;
-            } else if (!sawCode && sawComment) {
-                FileLineStats->CountOfLinesComment += 1;
-            }
+            RevClassifyCompletedLine(sawNonWhitespace,
+                                     sawCode,
+                                     sawComment,
+                                     FALSE,        // no block comment state
+                                     FileLineStats);
 
             sawCode = FALSE;
             sawComment = FALSE;
@@ -2997,7 +3050,9 @@ RevCountLinesLineCommentStyle(
         //
         if (SecondCommentChar == 0) {
 
-            if (currentChar == FirstCommentChar) {
+            if (FirstCommentChar != 0 &&
+                currentChar == FirstCommentChar) {
+
                 inLineComment = TRUE;
                 sawComment = TRUE;
                 continue;
@@ -3032,17 +3087,11 @@ RevCountLinesLineCommentStyle(
     //
     // Handle the final line when the file does not end with a newline.
     //
-    if (sawNonWhitespace || sawComment || sawCode) {
-
-        FileLineStats->CountOfLinesTotal += 1;
-
-        if (!sawNonWhitespace && !sawComment) {
-            FileLineStats->CountOfLinesBlank += 1;
-
-        } else if (!sawCode && sawComment) {
-            FileLineStats->CountOfLinesComment += 1;
-        }
-    }
+    RevMaybeClassifyLastLine(sawNonWhitespace,
+                             sawCode,
+                             sawComment,
+                             FALSE,
+                             FileLineStats);
 }
 
 /**
@@ -3125,20 +3174,11 @@ RevCountLinesXmlStyle(
                 continue;
             }
 
-            FileLineStats->CountOfLinesTotal += 1;
-
-            if (!sawNonWhitespace &&
-                !sawComment &&
-                !sawCode &&
-                !inBlockComment) {
-
-                FileLineStats->CountOfLinesBlank += 1;
-
-            } else if (!sawCode &&
-                       (sawComment || inBlockComment)) {
-
-                FileLineStats->CountOfLinesComment += 1;
-            }
+            RevClassifyCompletedLine(sawNonWhitespace,
+                                     sawCode,
+                                     sawComment,
+                                     inBlockComment,
+                                     FileLineStats);
 
             sawCode = FALSE;
             sawComment = FALSE;
@@ -3206,23 +3246,11 @@ RevCountLinesXmlStyle(
     //
     // Handle the final line when the file does not end with a newline.
     //
-    if (sawNonWhitespace || sawComment || sawCode || inBlockComment) {
-
-        FileLineStats->CountOfLinesTotal += 1;
-
-        if (!sawNonWhitespace &&
-            !sawComment &&
-            !sawCode &&
-            !inBlockComment) {
-
-            FileLineStats->CountOfLinesBlank += 1;
-
-        } else if (!sawCode &&
-                   (sawComment || inBlockComment)) {
-
-            FileLineStats->CountOfLinesComment += 1;
-        }
-    }
+    RevMaybeClassifyLastLine(sawNonWhitespace,
+                             sawCode,
+                             sawComment,
+                             inBlockComment,
+                             FileLineStats);
 }
 
 /**
