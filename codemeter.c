@@ -2044,8 +2044,13 @@ Exit:
 
 /**
  * @brief This function is responsible for starting the revision system.
+ *
  * It ensures that the system has been initialized correctly before
  * proceeding with its operations.
+ *
+ * The root path in Revision->InitParams.RootDirectory may be either:
+ *  - a directory path, in which case a directory enumeration is performed; or
+ *  - a path to a single file, in which case only that file is revised.
  *
  * @return TRUE if succeeded, FALSE if failed.
  */
@@ -2055,6 +2060,7 @@ RevStartRevision(
     )
 {
     BOOL status = TRUE;
+    DWORD attributes = {0};
 
     if (Revision == NULL || Revision->InitParams.RootDirectory == NULL) {
         RevLogError("The revision is not initialized/initialized correctly.");
@@ -2062,15 +2068,77 @@ RevStartRevision(
         goto Exit;
     }
 
+    attributes = GetFileAttributesW(Revision->InitParams.RootDirectory);
+
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        RevLogError("The specified path \"%ls\" does not exist or is not "
+                    "accessible. The last known error: %ls.",
+                    Revision->InitParams.RootDirectory,
+                    RevGetLastKnownWin32Error());
+        status = FALSE;
+        goto Exit;
+    }
+
     //
-    // Use the generic directory enumerator and the configured enumeration
-    // options.
+    // If the path is a directory, use the generic directory enumerator
+    // with the configured enumeration options.
     //
-    status = RevEnumerateDirectoryWithVisitor(
-        Revision->InitParams.RootDirectory,
-        RevRevisionFileVisitor,
-        NULL,
-        &Revision->InitParams.EnumerationOptions);
+    if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+
+        status = RevEnumerateDirectoryWithVisitor(
+            Revision->InitParams.RootDirectory,
+            RevRevisionFileVisitor,
+            NULL,
+            &Revision->InitParams.EnumerationOptions);
+
+    } else {
+
+        //
+        // The path refers to a single file. In this case we mimic what the
+        // default visitor would do for files:
+        //  - check if the file extension is recognized;
+        //  - if yes, revise the file;
+        //  - if not, increment the ignored files counter.
+        //
+        PWCHAR fileName = Revision->InitParams.RootDirectory;
+        PWCHAR lastBackslash = wcsrchr(fileName, L'\\');
+        PWCHAR lastSlash = wcsrchr(fileName, L'/');
+
+        //
+        // Choose the last path separator of either kind, if present.
+        //
+        if (lastBackslash != NULL || lastSlash != NULL) {
+
+            PWCHAR lastSeparator = lastBackslash;
+
+            if (lastSeparator == NULL ||
+                (lastSlash != NULL && lastSlash > lastSeparator)) {
+
+                lastSeparator = lastSlash;
+            }
+
+            fileName = lastSeparator + 1;
+        }
+
+        if (RevShouldReviseFile(fileName)) {
+
+            if (!RevReviseFile(Revision->InitParams.RootDirectory)) {
+
+                RevLogError("RevReviseFile failed to revise file \"%ls\".",
+                            Revision->InitParams.RootDirectory);
+
+                //
+                // Keep status TRUE here to match the directory enumeration
+                // behavior, where individual file failures do not cause
+                // the entire revision to fail.
+                //
+            }
+
+        } else {
+
+            Revision->CountOfIgnoredFiles += 1;
+        }
+    }
 
 Exit:
 
