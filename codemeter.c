@@ -52,13 +52,17 @@ typedef struct ENUMERATION_OPTIONS {
      * If FALSE, only the top-level directory is enumerated.
      */
     BOOL ShouldRecurseIntoSubdirectories;
+
+    // BOOL FollowReparsePoints;
+    // BOOL IncludeHiddenFiles;
+    // BOOL ProcessDirectoriesAsItems;
 } ENUMERATION_OPTIONS, *PENUMERATION_OPTIONS;
 
 /**
  * This structure stores the initialization parameters of the
  * revision provided by the user at launch.
  */
-typedef struct REVISION_INIT_PARAMS {
+typedef struct REVISION_CONFIG {
     /**
      * Path to the revision root directory.
      */
@@ -73,7 +77,7 @@ typedef struct REVISION_INIT_PARAMS {
      * Enumeration options that control how directory traversal is performed.
      */
     ENUMERATION_OPTIONS EnumerationOptions;
-} REVISION_INIT_PARAMS, *PREVISION_INIT_PARAMS;
+} REVISION_CONFIG, *PREVISION_CONFIG;
 
 /**
  * This enumeration defines the types of file extensions
@@ -160,7 +164,7 @@ typedef struct REVISION {
     /**
      * Revision initialization parameters provided by the user.
      */
-    REVISION_INIT_PARAMS InitParams;
+    REVISION_CONFIG InitParams;
 
     /**
      * List of revision records.
@@ -196,7 +200,7 @@ typedef struct REVISION {
 /**
  * This structure holds per-file line statistics.
  */
-typedef struct LINE_STATS {
+typedef struct FILE_LINE_STATS {
     /**
      * Total number of lines.
      */
@@ -211,28 +215,28 @@ typedef struct LINE_STATS {
      * Number of comment-only lines.
      */
     ULONGLONG CountOfLinesComment;
-} LINE_STATS, *PLINE_STATS;
+} FILE_LINE_STATS, *PFILE_LINE_STATS;
 
 /**
  * This enumeration represents logical "language families" used for
  * comment parsing.
  */
-typedef enum REV_LANGUAGE_FAMILY {
+typedef enum COMMENT_STYLE_FAMILY {
     RevLanguageFamilyUnknown = 0,
     RevLanguageFamilyCStyle,     /* // and /* ... *\/ style */
     RevLanguageFamilyHashStyle,  /* # ... */
     RevLanguageFamilyDoubleDash, /* -- ... (SQL, Haskell, etc.) */
     RevLanguageFamilySemicolon,  /* ; ... (some Lisps, assembly) */
     RevLanguageFamilyMax
-} REV_LANGUAGE_FAMILY;
+} COMMENT_STYLE_FAMILY;
 
 /**
  * This structure maps a language name substring to a language family.
  */
-typedef struct LANGUAGE_FAMILY_MAPPING {
+typedef struct COMMENT_STYLE_MAPPING {
     _Field_z_ PWCHAR LanguageSubstring;
-    REV_LANGUAGE_FAMILY LanguageFamily;
-} LANGUAGE_FAMILY_MAPPING, *PLANGUAGE_FAMILY_MAPPING;
+    COMMENT_STYLE_FAMILY LanguageFamily;
+} COMMENT_STYLE_MAPPING, *PCOMMENT_STYLE_MAPPING;
 
 /**
  * @brief Callback prototype for processing files and directories during
@@ -337,7 +341,7 @@ const PWCHAR ConsoleForegroundColors[] = {
  * N.B. This table is intentionally small and data-driven.
  * Anything that does not match here is treated as C-style by default.
  */
-LANGUAGE_FAMILY_MAPPING LanguageFamilyMappingTable[] = {
+COMMENT_STYLE_MAPPING LanguageFamilyMappingTable[] = {
     {L"Python",         RevLanguageFamilyHashStyle},
     {L"Ruby",           RevLanguageFamilyHashStyle},
     {L"Perl",           RevLanguageFamilyHashStyle},
@@ -1372,7 +1376,7 @@ RevInitializeExtensionHashTable(
 _Must_inspect_result_
 BOOL
 RevInitializeRevision(
-    _In_ PREVISION_INIT_PARAMS InitParams
+    _In_ PREVISION_CONFIG InitParams
     );
 
 _Must_inspect_result_
@@ -1389,7 +1393,7 @@ RevInitializeRevisionRecord(
     _In_z_ PWCHAR LanguageOrFileType
     );
 
-REV_LANGUAGE_FAMILY
+COMMENT_STYLE_FAMILY
 RevGetLanguageFamily(
     _In_z_ PWCHAR LanguageOrFileType
     );
@@ -1411,14 +1415,14 @@ VOID
 RevCountLinesCStyle(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
-    _Inout_ PLINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS LineStats
     );
 
 VOID
 RevCountLinesHashStyle(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
-    _Inout_ PLINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS LineStats
     );
 
 VOID
@@ -1427,15 +1431,15 @@ RevCountLinesLineCommentStyle(
     _In_ SIZE_T Length,
     _In_ CHAR FirstCommentChar,
     _In_ CHAR SecondCommentChar,
-    _Inout_ PLINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS LineStats
     );
 
 VOID
 RevCountLinesWithFamily(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
-    _In_ REV_LANGUAGE_FAMILY LanguageFamily,
-    _Inout_ PLINE_STATS LineStats
+    _In_ COMMENT_STYLE_FAMILY LanguageFamily,
+    _Inout_ PFILE_LINE_STATS LineStats
     );
 
 _Must_inspect_result_
@@ -1908,7 +1912,7 @@ RevInitializeExtensionHashTable(
  */
 BOOL
 RevInitializeRevision(
-    _In_ PREVISION_INIT_PARAMS InitParams
+    _In_ PREVISION_CONFIG InitParams
     )
 {
     BOOL status = TRUE;
@@ -2179,7 +2183,7 @@ RevFindRevisionRecordForLanguageByExtension(
  * @return One of REV_LANGUAGE_FAMILY values. Defaults to
  *         RevLanguageFamilyCStyle if no specific mapping is found.
  */
-REV_LANGUAGE_FAMILY
+COMMENT_STYLE_FAMILY
 RevGetLanguageFamily(
     _In_z_ PWCHAR LanguageOrFileType
     )
@@ -2612,7 +2616,7 @@ VOID
 RevCountLinesCStyle(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
-    _Inout_ PLINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS LineStats
     )
 {
     SIZE_T index = {0};
@@ -2804,7 +2808,7 @@ VOID
 RevCountLinesHashStyle(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
-    _Inout_ PLINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS LineStats
     )
 {
     RevCountLinesLineCommentStyle(Buffer,
@@ -2846,7 +2850,7 @@ RevCountLinesLineCommentStyle(
     _In_ SIZE_T Length,
     _In_ CHAR FirstCommentChar,
     _In_ CHAR SecondCommentChar,
-    _Inout_ PLINE_STATS LineStats
+    _Inout_ PFILE_LINE_STATS LineStats
     )
 {
     SIZE_T index;
@@ -3021,8 +3025,8 @@ VOID
 RevCountLinesWithFamily(
     _In_reads_bytes_(Length) const CHAR *Buffer,
     _In_ SIZE_T Length,
-    _In_ REV_LANGUAGE_FAMILY LanguageFamily,
-    _Inout_ PLINE_STATS LineStats
+    _In_ COMMENT_STYLE_FAMILY LanguageFamily,
+    _Inout_ PFILE_LINE_STATS LineStats
     )
 {
     switch (LanguageFamily) {
@@ -3098,8 +3102,8 @@ RevReviseFile(
     DWORD bytesRead = 0;
     PWCHAR fileExtension = NULL;
     PWCHAR languageOrFileType = NULL;
-    REV_LANGUAGE_FAMILY languageFamily = RevLanguageFamilyUnknown;
-    LINE_STATS lineStats = {0};
+    COMMENT_STYLE_FAMILY languageFamily = RevLanguageFamilyUnknown;
+    FILE_LINE_STATS lineStats = {0};
 
     if (FilePath == NULL) {
         RevLogError("FilePath is NULL.");
@@ -3392,7 +3396,7 @@ wmain(
     LARGE_INTEGER startQpc = {0};
     LARGE_INTEGER endQpc = {0};
     LARGE_INTEGER frequency = {0};
-    REVISION_INIT_PARAMS revisionInitParams = {0};
+    REVISION_CONFIG revisionInitParams = {0};
     LONG index = 0;
 
     SupportAnsi = SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE),
