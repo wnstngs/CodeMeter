@@ -3890,7 +3890,7 @@ wmain(
         revisionConfig.IsVerboseMode = TRUE;
     }
 #else
-    revisionInitParams.IsVerboseMode = FALSE;
+    revisionConfig.IsVerboseMode = FALSE;
 #endif
 
     /*
