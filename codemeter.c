@@ -304,9 +304,12 @@ const WCHAR UsageString[] =
     "CodeMeter.exe \"C:\\\\MyProject\"\n\n"
     "OPTIONS:\n\n"
     "\t-help, -h, -?\n"
-    "\tPrint a help message and exit.\n\n"
+    "\t    Print a help message and exit.\n\n"
     "\t-v\n"
-    "\tEnable verbose logging mode.\n\n";
+    "\t    Enable verbose logging mode.\n\n"
+    "\t-nr, -norecurse\n"
+    "\t    Do not recurse into subdirectories; only process the\n"
+    "\t    top-level directory.\n\n";
 
 /**
  * @brief This array holds ANSI escape sequences for changing text color
@@ -1461,12 +1464,6 @@ RevRevisionFileVisitor(
 
 _Must_inspect_result_
 BOOL
-RevEnumerateRecursively(
-    _In_z_ PWCHAR RootDirectoryPath
-    );
-
-_Must_inspect_result_
-BOOL
 RevShouldReviseFile(
     _In_z_ PWCHAR FileName
     );
@@ -1979,19 +1976,14 @@ RevStartRevision(
     }
 
     //
-    // Pass a duplicate of the root directory so the recursive function can
-    // allocate/free its own copy.
+    // Use the generic directory enumerator and the configured enumeration
+    // options.
     //
-    PWCHAR rootPathCopy = _wcsdup(Revision->InitParams.RootDirectory);
-    if (rootPathCopy == NULL) {
-        RevLogError("Failed to duplicate root directory path.");
-        status = FALSE;
-        goto Exit;
-    }
-
-    status = RevEnumerateRecursively(rootPathCopy);
-
-    free(rootPathCopy);
+    status = RevEnumerateDirectoryWithVisitor(
+        Revision->InitParams.RootDirectory,
+        RevRevisionFileVisitor,
+        NULL,
+        &Revision->InitParams.EnumerationOptions);
 
 Exit:
 
@@ -2519,35 +2511,6 @@ RevRevisionFileVisitor(
 }
 
 /**
- * @brief This function is designed to recursively traverse and enumerate
- * files and subdirectories within a given root directory path using the
- * default revision visitor.
- *
- * @param RootDirectoryPath Supplies the root directory path from which
- *                          enumeration should begin.
- *
- * @return TRUE if succeeded, FALSE if failed.
- */
-_Must_inspect_result_
-BOOL
-RevEnumerateRecursively(
-    _In_z_ PWCHAR RootDirectoryPath
-    )
-{
-    BOOL status = TRUE;
-    ENUMERATION_OPTIONS options;
-
-    options.ShouldRecurseIntoSubdirectories = TRUE;
-
-    status = RevEnumerateDirectoryWithVisitor(RootDirectoryPath,
-                                              RevRevisionFileVisitor,
-                                              NULL,
-                                              &options);
-
-    return status;
-}
-
-/**
  * @brief This function checks whether the specified file should be revised.
  *
  * The file is considered for revision if its extension is recognized in the
@@ -2609,7 +2572,7 @@ RevShouldReviseFile(
  *
  * @param Length Supplies the length of Buffer in bytes.
  *
- * @param LineStats Supplies a pointer to a LINE_STATS structure that
+ * @param LineStats Supplies a pointer to a FILE_LINE_STATS structure that
  *        receives the results.
  */
 VOID
@@ -2801,7 +2764,7 @@ RevCountLinesCStyle(
  *
  * @param Length Supplies the length of Buffer in bytes.
  *
- * @param LineStats Supplies a pointer to a LINE_STATS structure that
+ * @param LineStats Supplies a pointer to a FILE_LINE_STATS structure that
  *                  receives the results.
  */
 VOID
@@ -2841,7 +2804,7 @@ RevCountLinesHashStyle(
  * @param SecondCommentChar Supplies the second character of the comment
  *                          prefix, or 0 for a single-character prefix.
  *
- * @param LineStats Supplies a pointer to a LINE_STATS structure that
+ * @param LineStats Supplies a pointer to a FILE_LINE_STATS structure that
  *                  receives the results.
  */
 VOID
@@ -3018,7 +2981,7 @@ RevCountLinesLineCommentStyle(
  * @param LanguageFamily Supplies the language family that determines
  *                       which comment syntax is used.
  *
- * @param LineStats Supplies a pointer to a LINE_STATS structure that
+ * @param LineStats Supplies a pointer to a FILE_LINE_STATS structure that
  *                  receives the results.
  */
 VOID
@@ -3103,7 +3066,7 @@ RevReviseFile(
     PWCHAR fileExtension = NULL;
     PWCHAR languageOrFileType = NULL;
     COMMENT_STYLE_FAMILY languageFamily = RevLanguageFamilyUnknown;
-    FILE_LINE_STATS lineStats = {0};
+    FILE_LINE_STATS fileLineStats = {0};
 
     if (FilePath == NULL) {
         RevLogError("FilePath is NULL.");
@@ -3229,7 +3192,7 @@ RevReviseFile(
     RevCountLinesWithFamily(fileBuffer,
                             bytesRead,
                             languageFamily,
-                            &lineStats);
+                            &fileLineStats);
 
 UpdateStats:
 
@@ -3251,17 +3214,17 @@ UpdateStats:
     //
     // Update the stats for the extension.
     //
-    revisionRecord->CountOfLinesTotal += lineStats.CountOfLinesTotal;
-    revisionRecord->CountOfLinesBlank += lineStats.CountOfLinesBlank;
-    revisionRecord->CountOfLinesComment += lineStats.CountOfLinesComment;
+    revisionRecord->CountOfLinesTotal += fileLineStats.CountOfLinesTotal;
+    revisionRecord->CountOfLinesBlank += fileLineStats.CountOfLinesBlank;
+    revisionRecord->CountOfLinesComment += fileLineStats.CountOfLinesComment;
     revisionRecord->CountOfFiles += 1;
 
     //
     // Update the stats for the entire revision.
     //
-    Revision->CountOfLinesTotal += lineStats.CountOfLinesTotal;
-    Revision->CountOfLinesBlank += lineStats.CountOfLinesBlank;
-    Revision->CountOfLinesComment += lineStats.CountOfLinesComment;
+    Revision->CountOfLinesTotal += fileLineStats.CountOfLinesTotal;
+    Revision->CountOfLinesBlank += fileLineStats.CountOfLinesBlank;
+    Revision->CountOfLinesComment += fileLineStats.CountOfLinesComment;
     Revision->CountOfFiles += 1;
 
 Exit:
@@ -3396,7 +3359,7 @@ wmain(
     LARGE_INTEGER startQpc = {0};
     LARGE_INTEGER endQpc = {0};
     LARGE_INTEGER frequency = {0};
-    REVISION_CONFIG revisionInitParams = {0};
+    REVISION_CONFIG revisionConfig = {0};
     LONG index = 0;
 
     SupportAnsi = SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE),
@@ -3421,23 +3384,28 @@ wmain(
           */
          RevPrint(UsageString);
          goto Exit;
-     }
+    }
 
-     if (wcscmp(argv[1], L"-help") == 0 ||
-         wcscmp(argv[1], L"-h") == 0 ||
-         wcscmp(argv[1], L"-?") == 0) {
-         /*
-          * The only command line argument passed was '-help', '-h', or '-?',
-          * so show the instruction for use.
-          */
-         RevPrint(UsageString);
-         goto Exit;
-     }
+    if (wcscmp(argv[1], L"-help") == 0 ||
+        wcscmp(argv[1], L"-h") == 0 ||
+        wcscmp(argv[1], L"-?") == 0) {
+        /*
+         * The only command line argument passed was '-help', '-h', or '-?',
+         * so show the instruction for use.
+         */
+        RevPrint(UsageString);
+        goto Exit;
+    }
+
+    //
+    // Default enumeration behavior: recurse into subdirectories.
+    //
+    revisionConfig.EnumerationOptions.ShouldRecurseIntoSubdirectories = TRUE;
 
     hr = PathAllocCanonicalize(argv[1],
                                PATHCCH_ALLOW_LONG_PATHS |
                                PATHCCH_FORCE_ENABLE_LONG_NAME_PROCESS,
-                               &revisionInitParams.RootDirectory);
+                               &revisionConfig.RootDirectory);
     if (FAILED(hr)) {
         RevLogError("Path normalization failed: 0x%08X", hr);
         status = -1;
@@ -3454,13 +3422,31 @@ wmain(
          * Process additional parameters:
          */
 
-        for (index = 2; index < argc; ++index) {
+        for (index = 2; index < argc; index += 1) {
 
-            /*
-             * -v: Sets the IsVerboseMode configuration flag to TRUE.
-             */
+            //
+            // -v: Enable verbose mode.
+            //
             if (wcscmp(argv[index], L"-v") == 0) {
-                revisionInitParams.IsVerboseMode = TRUE;
+
+                revisionConfig.IsVerboseMode = TRUE;
+
+            } else if (wcscmp(argv[index], L"-nr") == 0 ||
+                       wcscmp(argv[index], L"-norecurse") == 0) {
+
+                //
+                // -nr / -norecurse: do NOT recurse into subdirectories;
+                // only enumerate the top-level directory.
+                //
+                revisionConfig.EnumerationOptions.
+                               ShouldRecurseIntoSubdirectories = FALSE;
+
+            } else {
+
+                //
+                // Unknown option.
+                //
+                RevLogWarning("Unknown command line option: %ls", argv[index]);
             }
 
         }
@@ -3470,8 +3456,8 @@ wmain(
     /*
      * Always use verbose mode in debug builds.
      */
-    if (revisionInitParams.IsVerboseMode == FALSE) {
-        revisionInitParams.IsVerboseMode = TRUE;
+    if (revisionConfig.IsVerboseMode == FALSE) {
+        revisionConfig.IsVerboseMode = TRUE;
     }
 #else
     revisionInitParams.IsVerboseMode = FALSE;
@@ -3480,7 +3466,7 @@ wmain(
     /*
      * Initialize the revision engine.
      */
-    status = RevInitializeRevision(&revisionInitParams);
+    status = RevInitializeRevision(&revisionConfig);
     if (status == FALSE) {
         RevLogError("Failed to initialize the revision engine.");
         goto Exit;
@@ -3528,8 +3514,8 @@ wmain(
 
 Exit:
 
-    if (revisionInitParams.RootDirectory != NULL) {
-        LocalFree(revisionInitParams.RootDirectory);
+    if (revisionConfig.RootDirectory != NULL) {
+        LocalFree(revisionConfig.RootDirectory);
     }
 
     return status;
