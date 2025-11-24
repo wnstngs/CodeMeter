@@ -10,7 +10,7 @@ Abstract:
 
     This module implements CodeMeter, a program for counting lines of code.
 
-    Throughout the code, the term "revision" refers to the entire process, which
+    Throughout the code, the term revision refers to the entire process, which
     includes scanning files, counting the number of files, and calculating the
     total lines of code.
 
@@ -59,12 +59,39 @@ typedef struct ENUMERATION_OPTIONS {
 } ENUMERATION_OPTIONS, *PENUMERATION_OPTIONS;
 
 /**
+ * This enumeration stores file processing backend kind for the revision engine.
+ */
+typedef enum REV_FILE_BACKEND_KIND {
+    /**
+     * Choose the best available backend for this platform.
+     */
+    RevFileBackendAuto = 0,
+
+    /**
+     * Process files on the enumeration thread.
+     */
+    RevFileBackendSynchronous,
+
+    /**
+     * Process files on a dedicated worker thread pool.
+     */
+    RevFileBackendThreadPool,
+
+    // Reserved for future asynchronous backends:
+    // RevFileBackendIocp,
+    // RevFileBackendIoRing,
+
+    RevFileBackendMax
+} REV_FILE_BACKEND_KIND;
+
+
+/**
  * This structure stores the initialization parameters of the
  * revision provided by the user at launch.
  */
 typedef struct REVISION_CONFIG {
     /**
-     * Path to the revision root directory.
+     * Path to the revision root directory. May be a directory or a single file.
      */
     _Field_z_ PWCHAR RootDirectory;
 
@@ -77,23 +104,21 @@ typedef struct REVISION_CONFIG {
      * Enumeration options that control how directory traversal is performed.
      */
     ENUMERATION_OPTIONS EnumerationOptions;
+
+    /**
+     * File processing backend kind. If RevFileBackendAuto is specified
+     * (the default when zero-initialized), the engine will choose the
+     * most appropriate backend for the current platform.
+     */
+    REV_FILE_BACKEND_KIND BackendKind;
+
+    /**
+     * Desired worker thread count for backends that support it
+     * (e.g., thread pool). If zero, a default based on the number
+     * of processors is used.
+     */
+    ULONG WorkerThreadCount;
 } REVISION_CONFIG, *PREVISION_CONFIG;
-
-/**
- * This enumeration defines the types of file extensions
- * (to be used in REVISION_RECORD_EXTENSION_MAPPING).
- */
-typedef enum REVISION_RECORD_EXTENSION_TYPE {
-    /**
-     * File extension with a single dot, e.g. ".txt".
-     */
-    SingleDot,
-
-    /**
-     * File extension with multiple dots, e.g. ".CMakeLists.txt".
-     */
-    MultiDot
-} REVISION_RECORD_EXTENSION_TYPE;
 
 /**
  * This structure stores the mapping of file extensions to
@@ -109,13 +134,6 @@ typedef struct REVISION_RECORD_EXTENSION_MAPPING {
      * Programming language or file type.
      */
     _Field_z_ PWCHAR LanguageOrFileType;
-
-    /**
-     * Extension type which indicates whether the extension is a
-     * single-dot or multi-dot extension.
-     */
-    /* TODO: Temporarily disabled. Re-evaluate the approach.
-    REVISION_RECORD_EXTENSION_TYPE ExtensionType; */
 } REVISION_RECORD_EXTENSION_MAPPING, *PREVISION_RECORD_EXTENSION_MAPPING;
 
 /**
@@ -157,14 +175,20 @@ typedef struct REVISION_RECORD {
     ULONG CountOfFiles;
 } REVISION_RECORD, *PREVISION_RECORD;
 
+//
+// This is a forward declaration of the backend vtable type so that REVISION can
+// refer to it via a pointer.
+//
+struct REV_FILE_BACKEND_VTBL;
+
 /**
- * This structure stores the statistics of the entire revision.
+ * This structure represents a single revision run over a project.
  */
 typedef struct REVISION {
     /**
      * Revision initialization parameters provided by the user.
      */
-    REVISION_CONFIG InitParams;
+    REVISION_CONFIG Config;
 
     /**
      * List of revision records.
@@ -195,7 +219,162 @@ typedef struct REVISION {
      * Number of ignored files during the revision.
      */
     ULONG CountOfIgnoredFiles;
+
+    /**
+     * Effective backend kind chosen for this revision.
+     */
+    REV_FILE_BACKEND_KIND BackendKind;
+
+    /**
+     * Backend vtable used to schedule and execute per-file processing.
+     */
+    const struct REV_FILE_BACKEND_VTBL *BackendVtable;
+
+    /**
+     * Opaque backend-specific context (e.g. thread pool state).
+     */
+    PVOID BackendContext;
+
+    /**
+     * Protects global counters and the revision record list.
+     *
+     * All updates to Revision->CountOf* fields and all accesses to the
+     * RevisionRecordListHead must hold this lock.
+     */
+    CRITICAL_SECTION StatsLock;
 } REVISION, *PREVISION;
+
+/**
+ * Virtual table for file processing backends.
+ *
+ * Backends are responsible for scheduling and executing RevReviseFile()
+ * calls, possibly on a different set of threads.
+ */
+typedef struct REV_FILE_BACKEND_VTBL {
+    /**
+     * @brief Initializes the backend for the given revision.
+     *
+     * @param Revision Supplies the revision instance.
+     *
+     * @return TRUE if the backend was initialized successfully,
+     *         FALSE otherwise.
+     */
+    _Must_inspect_result_
+    BOOL
+    (*Initialize)(
+        _Inout_ PREVISION Revision
+        );
+
+    /**
+     * @brief Submits a file for processing.
+     *
+     * @param Revision Supplies the revision instance.
+     *
+     * @param FullPath Supplies the full path to the file.
+     *
+     * @param FindData Supplies basic metadata obtained during enumeration.
+     *
+     * @return TRUE if the file was accepted for processing, FALSE otherwise.
+     */
+    _Must_inspect_result_
+    BOOL
+    (*SubmitFile)(
+        _Inout_ PREVISION Revision,
+        _In_z_ PWCHAR FullPath,
+        _In_ const WIN32_FIND_DATAW *FindData
+        );
+
+    /**
+     * @brief Drains all outstanding work and shuts down the backend.
+     *
+     * @param Revision Supplies the revision instance.
+     *
+     * @return TRUE if the backend was shut down cleanly, FALSE otherwise.
+     */
+    _Must_inspect_result_
+    BOOL
+    (*DrainAndShutdown)(
+        _Inout_ PREVISION Revision
+        );
+} REV_FILE_BACKEND_VTBL, *PREV_FILE_BACKEND_VTBL;
+
+/**
+ * @brief Work item used by the thread pool backend to represent a single file.
+ */
+typedef struct REV_THREAD_POOL_WORK_ITEM {
+
+    /**
+     * Pointer to the next work item in the queue.
+     */
+    struct REV_THREAD_POOL_WORK_ITEM *Next;
+
+    /**
+     * Full path to the file to revise. The string is owned by the work
+     * item and must be freed when processing completes.
+     */
+    PWCHAR FilePath;
+
+    /**
+     * Copy of the WIN32_FIND_DATAW structure from enumeration.
+     */
+    WIN32_FIND_DATAW FindData;
+
+} REV_THREAD_POOL_WORK_ITEM, *PREV_THREAD_POOL_WORK_ITEM;
+
+/**
+ * @brief Backend context for the thread pool implementation.
+ *
+ * The context is opaque to the rest of the engine and is stored in
+ * Revision->BackendContext.
+ */
+typedef struct REV_THREAD_POOL_BACKEND_CONTEXT {
+
+    /**
+     * Array of worker thread handles.
+     */
+    PHANDLE WorkerThreads;
+
+    /**
+     * Number of worker threads in the pool.
+     */
+    ULONG WorkerThreadCount;
+
+    /**
+     * Singly linked list representing the work queue head.
+     */
+    PREV_THREAD_POOL_WORK_ITEM WorkHead;
+
+    /**
+     * Pointer to the tail of the work queue.
+     */
+    PREV_THREAD_POOL_WORK_ITEM WorkTail;
+
+    /**
+     * Protects the work queue and related state.
+     */
+    CRITICAL_SECTION QueueLock;
+
+    /**
+     * Signals that the work queue is not empty.
+     */
+    CONDITION_VARIABLE QueueNotEmpty;
+
+    /**
+     * Signals that the work queue is fully drained and no workers are active.
+     */
+    CONDITION_VARIABLE QueueDrained;
+
+    /**
+     * When TRUE, no new work items may be enqueued.
+     */
+    BOOL StopEnqueuing;
+
+    /**
+     * Number of worker threads currently processing a work item.
+     */
+    ULONG ActiveWorkers;
+
+} REV_THREAD_POOL_BACKEND_CONTEXT, *PREV_THREAD_POOL_BACKEND_CONTEXT;
 
 /**
  * This structure holds per-file line statistics.
@@ -337,7 +516,7 @@ typedef struct COMMENT_STYLE_MAPPING {
  *
  * @return TRUE to continue enumeration, FALSE to stop.
  */
-typedef BOOL (*PREV_FILE_VISITOR)(
+typedef BOOL (*PFILE_VISITOR)(
     _In_z_ PWCHAR FullPath,
     _In_ const WIN32_FIND_DATAW *FindData,
     _Inout_opt_ PVOID Context
@@ -385,7 +564,7 @@ const WCHAR UsageString[] =
     "\tIn order to count the number of lines of CodeMeter code, you need\n"
     "\tthe path to the root directory of the project you want to revise.\n"
     "\tThe path should be passed as the first argument of the command line:\n\n\t"
-    "CodeMeter.exe \"C:\\\\MyProject\"\n\n"
+    "CodeMeter.exe \"C:\\\\MyProject\" -v -backend threadpool -nr\n\n"
     "OPTIONS:\n\n"
     "\t-help, -h, -?\n"
     "\t    Print a help message and exit.\n\n"
@@ -393,7 +572,12 @@ const WCHAR UsageString[] =
     "\t    Enable verbose logging mode.\n\n"
     "\t-nr, -norecurse\n"
     "\t    Do not recurse into subdirectories; only process the\n"
-    "\t    top-level directory.\n\n";
+    "\t    top-level directory.\n\n"
+    "\t-backend <auto|sync|threadpool>\n"
+    "\t    Select the file processing backend. Default is 'auto'.\n\n"
+    "\t-threads <N>\n"
+    "\t    Limit the number of worker threads used by the backend.\n"
+    "\t    Only meaningful for the thread pool backend.\n\n";
 
 /**
  * @brief This array holds ANSI escape sequences for changing text color
@@ -1439,7 +1623,7 @@ BOOL RevExtensionHashTableInitialized = FALSE;
  * @brief The global revision state used throughout the entire program
  * run-time.
  */
-PREVISION Revision = NULL;
+PREVISION RevisionState = NULL;
 
 /**
  * @brief Indicates whether ANSI escape sequences are supported.
@@ -1488,6 +1672,18 @@ BOOL
 RevReadFileIntoBufferView(
     _In_z_ PWCHAR FilePath,
     _Out_ PFILE_BUFFER_VIEW View
+    );
+
+_Must_inspect_result_
+BOOL
+RevInitializeFileBackend(
+    _Inout_ PREVISION Revision
+    );
+
+_Must_inspect_result_
+BOOL
+RevDrainAndShutdownFileBackend(
+    _Inout_ PREVISION Revision
     );
 
 _Must_inspect_result_
@@ -1583,7 +1779,7 @@ _Must_inspect_result_
 BOOL
 RevEnumerateDirectoryWithVisitor(
     _In_z_ PWCHAR RootDirectoryPath,
-    _In_ PREV_FILE_VISITOR Visitor,
+    _In_ PFILE_VISITOR Visitor,
     _Inout_opt_ PVOID Context,
     _In_opt_ PENUMERATION_OPTIONS Options
     );
@@ -1611,6 +1807,13 @@ RevReviseFile(
 VOID
 RevOutputRevisionStatistics(
     VOID
+    );
+
+_Must_inspect_result_
+BOOL
+RevParseBackendKind(
+    _In_z_ PWCHAR Value,
+    _Out_ REV_FILE_BACKEND_KIND *BackendKind
     );
 
 //
@@ -1715,11 +1918,10 @@ RevPrintEx(
  *
  * @param ... Supplies additional parameters to be formatted and printed.
  */
-#define RevPrint(Format, ...)                           \
-    do {                                                \
-        RevPrintEx(Green, Format, __VA_ARGS__);         \
+#define RevPrint(...)                           \
+    do {                                        \
+        RevPrintEx(Green, __VA_ARGS__);         \
     } while (0)
-
 /**
  * @brief This function outputs a red text error message to the standard
  * error stream.
@@ -1730,17 +1932,18 @@ RevPrintEx(
  * revision structure. The logging is conditioned on whether verbose mode
  * is enabled.
  */
-#define RevLogError(Message, ...)                                                       \
-    do {                                                                                \
-        if (!Revision || Revision->InitParams.IsVerboseMode) {                          \
-            fprintf(stderr,                                                             \
-                    SupportAnsi ?                                                       \
-                        "\033[0;31m[ERROR]\n└───> (in %s@%d): " Message "\033[0m\n" :   \
-                        "[ERROR]\n└───> (in %s@%d): " Message "\n",                     \
-                        __FUNCTION__,                                                   \
-                        __LINE__,                                                       \
-                        ##__VA_ARGS__);                                                 \
-        }                                                                               \
+#define RevLogError(...)                                                       \
+    do {                                                                       \
+        if (!RevisionState || RevisionState->Config.IsVerboseMode) {           \
+            fprintf(stderr,                                                    \
+                    SupportAnsi ?                                              \
+                    "\033[0;31m[ERROR]\n└───> (in %s@%d): " :                  \
+                    "[ERROR]\n└───> (in %s@%d): ",                             \
+                    __FUNCTION__,                                              \
+                    __LINE__);                                                 \
+            fprintf(stderr, __VA_ARGS__);                                      \
+            fprintf(stderr, SupportAnsi ? "\033[0m\n" : "\n");                 \
+        }                                                                      \
     } while (0)
 
 /**
@@ -1753,17 +1956,18 @@ RevPrintEx(
  * revision structure. The logging is conditioned on whether verbose mode
  * is enabled.
  */
-#define RevLogWarning(Message, ...)                                                     \
-    do {                                                                                \
-        if (!Revision || Revision->InitParams.IsVerboseMode) {                          \
-            fprintf(stdout,                                                             \
-                    SupportAnsi ?                                                       \
-                        "\033[0;33m[WARNING]\n└───> (in %s@%d): " Message "\033[0m\n" : \
-                        "[WARNING]\n└───> (in %s@%d): " Message "\n",                   \
-                        __FUNCTION__,                                                   \
-                        __LINE__,                                                       \
-                        ##__VA_ARGS__);                                                 \
-        }                                                                               \
+#define RevLogWarning(...)                                                     \
+    do {                                                                       \
+        if (!RevisionState || RevisionState->Config.IsVerboseMode) {           \
+            fprintf(stdout,                                                    \
+                    SupportAnsi ?                                              \
+                    "\033[0;33m[WARNING]\n└───> (in %s@%d): " :                \
+                    "[WARNING]\n└───> (in %s@%d): ",                           \
+                    __FUNCTION__,                                              \
+                    __LINE__);                                                 \
+            fprintf(stdout, __VA_ARGS__);                                      \
+            fprintf(stdout, SupportAnsi ? "\033[0m\n" : "\n");                 \
+        }                                                                      \
     } while (0)
 
 /**
@@ -2255,6 +2459,644 @@ Exit:
     return status;
 }
 
+//
+// Synchronous backend.
+//
+// All files are revised on the calling thread.
+//
+
+/**
+ * @brief Initializes the synchronous file backend.
+ *
+ * In this mode, all RevReviseFile() calls are executed on the caller
+ * thread. No additional resources are required.
+ *
+ * @param Revision Supplies the revision instance.
+ *
+ * @return TRUE (always).
+ */
+_Must_inspect_result_
+BOOL
+RevSynchronousBackendInitialize(
+    _Inout_ PREVISION Revision
+    )
+{
+    UNREFERENCED_PARAMETER(Revision);
+    return TRUE;
+}
+
+/**
+ * @brief Submits a single file to the synchronous backend.
+ *
+ * In this mode, the file is processed immediately by calling
+ * RevReviseFile() on the caller thread.
+ */
+_Must_inspect_result_
+BOOL
+RevSynchronousBackendSubmitFile(
+    _Inout_ PREVISION Revision,
+    _In_z_ PWCHAR FullPath,
+    _In_ const WIN32_FIND_DATAW *FindData
+    )
+{
+    UNREFERENCED_PARAMETER(FindData);
+
+    if (Revision == NULL || FullPath == NULL) {
+        return FALSE;
+    }
+
+    //
+    // In the synchronous backend, we simply revise the file immediately
+    // on the caller thread.
+    //
+    return RevReviseFile(FullPath);
+}
+
+/**
+ * @brief Drains and shuts down the synchronous backend.
+ *
+ * There is nothing to drain for the synchronous backend. This function
+ * is provided for uniformity with other backends.
+ */
+_Must_inspect_result_
+BOOL
+RevSynchronousBackendDrainAndShutdown(
+    _Inout_ PREVISION Revision
+    )
+{
+    UNREFERENCED_PARAMETER(Revision);
+
+    //
+    // No outstanding work to drain for synchronous backend.
+    //
+    return TRUE;
+}
+
+/**
+ * Static vtable instance for the synchronous backend.
+ */
+static const REV_FILE_BACKEND_VTBL RevSynchronousBackendVtable = {
+    RevSynchronousBackendInitialize,
+    RevSynchronousBackendSubmitFile,
+    RevSynchronousBackendDrainAndShutdown
+};
+
+//
+// Thread pool backend.
+//
+
+/**
+ * Worker thread procedure for the thread pool backend.
+ *
+ * @param Parameter Supplies a pointer to a thread pool backend context.
+ *
+ * @return Always returns 0.
+ */
+DWORD
+WINAPI
+RevThreadPoolWorkerThread(
+    _In_ LPVOID Parameter
+    )
+{
+    //
+    // Global revision pointer published during RevInitializeRevision().
+    //
+    PREVISION revision = RevisionState;
+    PREV_THREAD_POOL_BACKEND_CONTEXT context = Parameter;
+
+    if (context == NULL) {
+        return 0;
+    }
+
+    for (;;) {
+
+        PREV_THREAD_POOL_WORK_ITEM workItem = NULL;
+
+        //
+        // Pull the next work item from the queue, waiting if necessary.
+        //
+        EnterCriticalSection(&context->QueueLock);
+
+        while (context->WorkHead == NULL && !context->StopEnqueuing) {
+
+            SleepConditionVariableCS(&context->QueueNotEmpty,
+                                     &context->QueueLock,
+                                     INFINITE);
+        }
+
+        //
+        // No work and enqueuing has stopped, so it's time to exit.
+        //
+        if (context->WorkHead == NULL && context->StopEnqueuing) {
+
+            LeaveCriticalSection(&context->QueueLock);
+            break;
+        }
+
+        //
+        // Pop one item from the head of the queue.
+        //
+        workItem = context->WorkHead;
+        context->WorkHead = workItem->Next;
+
+        if (context->WorkHead == NULL) {
+            context->WorkTail = NULL;
+        }
+
+        context->ActiveWorkers += 1;
+
+        LeaveCriticalSection(&context->QueueLock);
+
+        //
+        // Process the file outside the lock.
+        //
+        if (revision != NULL && workItem->FilePath != NULL) {
+            (void)RevReviseFile(workItem->FilePath);
+        }
+
+        //
+        // Free work item resources.
+        //
+        if (workItem->FilePath != NULL) {
+            free(workItem->FilePath);
+        }
+        free(workItem);
+
+        //
+        // Update worker count and potentially signal that the queue
+        // has been fully drained.
+        //
+        EnterCriticalSection(&context->QueueLock);
+
+        context->ActiveWorkers -= 1;
+
+        if (context->StopEnqueuing &&
+            context->WorkHead == NULL &&
+            context->ActiveWorkers == 0) {
+
+            WakeAllConditionVariable(&context->QueueDrained);
+        }
+
+        LeaveCriticalSection(&context->QueueLock);
+    }
+
+    return 0;
+}
+
+/**
+ * Initializes the thread pool backend for the given revision.
+ *
+ * @param Revision Supplies the revision instance.
+ *
+ * @return TRUE if the backend was initialized successfully, FALSE otherwise.
+ */
+_Must_inspect_result_
+BOOL
+RevThreadPoolBackendInitialize(
+    _Inout_ PREVISION Revision
+    )
+{
+    SYSTEM_INFO systemInfo;
+    ULONG desiredThreads;
+    ULONG index;
+    PREV_THREAD_POOL_BACKEND_CONTEXT context = NULL;
+
+    if (Revision == NULL) {
+        return FALSE;
+    }
+
+    //
+    // Decide how many worker threads to use. If no override was specified
+    // in the revision config, fall back to the number of logical processors.
+    //
+    GetSystemInfo(&systemInfo);
+
+    desiredThreads = Revision->Config.WorkerThreadCount;
+    if (desiredThreads == 0) {
+        desiredThreads = systemInfo.dwNumberOfProcessors;
+        if (desiredThreads == 0) {
+            desiredThreads = 1;
+        }
+    }
+
+    //
+    // Allocate and zero the backend context.
+    //
+    context = (PREV_THREAD_POOL_BACKEND_CONTEXT)malloc(
+        sizeof(REV_THREAD_POOL_BACKEND_CONTEXT));
+
+    if (context == NULL) {
+        RevLogError("Failed to allocate thread pool backend context.");
+        return FALSE;
+    }
+
+    ZeroMemory(context, sizeof(*context));
+
+    context->WorkerThreadCount = desiredThreads;
+    context->WorkerThreads = (PHANDLE)malloc(sizeof(HANDLE) * desiredThreads);
+
+    if (context->WorkerThreads == NULL) {
+        RevLogError("Failed to allocate thread handle array for %lu threads.",
+                    desiredThreads);
+        free(context);
+        return FALSE;
+    }
+
+    ZeroMemory(context->WorkerThreads, sizeof(HANDLE) * desiredThreads);
+
+    InitializeCriticalSection(&context->QueueLock);
+    InitializeConditionVariable(&context->QueueNotEmpty);
+    InitializeConditionVariable(&context->QueueDrained);
+
+    context->WorkHead = NULL;
+    context->WorkTail = NULL;
+    context->StopEnqueuing = FALSE;
+    context->ActiveWorkers = 0;
+
+    //
+    // Spawn worker threads, each of which will drain the shared queue.
+    //
+    for (index = 0; index < desiredThreads; index += 1) {
+
+        HANDLE threadHandle = CreateThread(NULL,
+                                           0,
+                                           RevThreadPoolWorkerThread,
+                                           context,
+                                           0,
+                                           NULL);
+
+        if (threadHandle == NULL) {
+
+            RevLogError("Failed to create worker thread %lu. Error: %ls.",
+                        index,
+                        RevGetLastKnownWin32Error());
+
+            //
+            // Stop creating new threads; we'll shut down below.
+            //
+            context->StopEnqueuing = TRUE;
+            context->WorkerThreadCount = index;
+            break;
+        }
+
+        context->WorkerThreads[index] = threadHandle;
+    }
+
+    //
+    // If no worker threads were successfully created,
+    // tear down the context.
+    //
+    if (context->WorkerThreadCount == 0) {
+
+        DeleteCriticalSection(&context->QueueLock);
+        free(context->WorkerThreads);
+        free(context);
+
+        return FALSE;
+    }
+
+    Revision->BackendContext = context;
+
+    return TRUE;
+}
+
+/**
+ * Submits a single file to the thread pool backend.
+ */
+_Must_inspect_result_
+BOOL
+RevThreadPoolBackendSubmitFile(
+    _Inout_ PREVISION Revision,
+    _In_z_ PWCHAR FullPath,
+    _In_ const WIN32_FIND_DATAW *FindData
+    )
+{
+    PREV_THREAD_POOL_BACKEND_CONTEXT context = NULL;
+    PREV_THREAD_POOL_WORK_ITEM workItem = NULL;
+    SIZE_T pathLengthInChars = 0;
+    PWCHAR pathCopy = NULL;
+
+    if (Revision == NULL || FullPath == NULL) {
+        return FALSE;
+    }
+
+    context = (PREV_THREAD_POOL_BACKEND_CONTEXT)Revision->BackendContext;
+
+    if (context == NULL) {
+        return FALSE;
+    }
+
+    //
+    // Copy the path so that the work item owns its own stable string.
+    //
+    pathLengthInChars = wcslen(FullPath) + 1;
+    pathCopy = (PWCHAR)malloc(pathLengthInChars * sizeof(WCHAR));
+
+    if (pathCopy == NULL) {
+        RevLogError("Failed to allocate path copy for \"%ls\".", FullPath);
+        return FALSE;
+    }
+
+    memcpy(pathCopy,
+           FullPath,
+           pathLengthInChars * sizeof(WCHAR));
+
+    //
+    // Allocate and initialize the work item container.
+    //
+    workItem = (PREV_THREAD_POOL_WORK_ITEM)malloc(
+        sizeof(REV_THREAD_POOL_WORK_ITEM));
+
+    if (workItem == NULL) {
+        RevLogError("Failed to allocate thread pool work item.");
+        free(pathCopy);
+        return FALSE;
+    }
+
+    ZeroMemory(workItem, sizeof(*workItem));
+
+    workItem->FilePath = pathCopy;
+
+    if (FindData != NULL) {
+        workItem->FindData = *FindData;
+    }
+
+    workItem->Next = NULL;
+
+    //
+    // Enqueue the work item at the tail of the queue.
+    //
+    EnterCriticalSection(&context->QueueLock);
+
+    if (context->StopEnqueuing) {
+
+        //
+        // Backend is shutting down; reject new work.
+        //
+        LeaveCriticalSection(&context->QueueLock);
+        free(pathCopy);
+        free(workItem);
+
+        return FALSE;
+    }
+
+    if (context->WorkTail == NULL) {
+        context->WorkHead = workItem;
+        context->WorkTail = workItem;
+
+    } else {
+        context->WorkTail->Next = workItem;
+        context->WorkTail = workItem;
+    }
+
+    //
+    // Signal one waiting worker that work is now available.
+    //
+    WakeConditionVariable(&context->QueueNotEmpty);
+
+    LeaveCriticalSection(&context->QueueLock);
+
+    return TRUE;
+}
+
+/**
+ * @brief Drains and shuts down the thread pool backend.
+ *
+ * This function prevents further enqueues, waits for the work queue
+ * to be fully drained, joins all worker threads, and cleans up the
+ * backend context.
+ *
+ * @param Revision Supplies the revision instance.
+ *
+ * @return TRUE if the backend was shut down cleanly, FALSE otherwise.
+ */
+_Must_inspect_result_
+BOOL
+RevThreadPoolBackendDrainAndShutdown(
+    _Inout_ PREVISION Revision
+    )
+{
+    PREV_THREAD_POOL_BACKEND_CONTEXT Context = NULL;
+    ULONG Index;
+
+    if (Revision == NULL) {
+        return FALSE;
+    }
+
+    Context = (PREV_THREAD_POOL_BACKEND_CONTEXT)Revision->BackendContext;
+
+    if (Context == NULL) {
+        //
+        // Backend was never initialized; nothing to shut down.
+        //
+        return TRUE;
+    }
+
+    //
+    // Stop accepting new work items and wake all workers so that they can
+    // finish draining the queue.
+    //
+    EnterCriticalSection(&Context->QueueLock);
+
+    Context->StopEnqueuing = TRUE;
+    WakeAllConditionVariable(&Context->QueueNotEmpty);
+
+    //
+    // Wait until the queue is empty and no worker is actively processing
+    // a work item.
+    //
+    while (Context->WorkHead != NULL || 
+           Context->ActiveWorkers != 0) {
+
+        SleepConditionVariableCS(&Context->QueueDrained,
+                                 &Context->QueueLock,
+                                 INFINITE);
+    }
+
+    LeaveCriticalSection(&Context->QueueLock);
+
+    //
+    // Join all worker threads and close their handles. The context
+    // initializer must ensure that WorkerThreadCount and WorkerThreads
+    // are consistent (either both valid or both zero/NULL).
+    //
+    if (Context->WorkerThreadCount > 0 && 
+        Context->WorkerThreads != NULL) {
+
+        WaitForMultipleObjects(Context->WorkerThreadCount,
+                               Context->WorkerThreads,
+                               TRUE,
+                               INFINITE);
+
+        for (Index = 0; Index < Context->WorkerThreadCount; Index += 1) {
+
+            HANDLE ThreadHandle = Context->WorkerThreads[Index];
+
+            //
+            // ThreadHandle may legitimately be NULL if thread creation
+            // failed after the array was zeroed during initialization.
+            //
+            if (ThreadHandle != NULL) {
+                CloseHandle(ThreadHandle);
+            }
+        }
+    }
+
+    //
+    // Free any remaining work items in the queue. In normal operation
+    // there should be none at this point, because we waited for the
+    // queue to be drained.
+    //
+    EnterCriticalSection(&Context->QueueLock);
+
+    while (Context->WorkHead != NULL) {
+
+        PREV_THREAD_POOL_WORK_ITEM Item = Context->WorkHead;
+
+        //
+        // Advance the head pointer before touching the current item to
+        // avoid use-after-free bugs.
+        //
+        Context->WorkHead = Item->Next;
+
+        //
+        // Break the linkage to make debugging easier and avoid accidental
+        // double-free chains if the Item pointer is misused after this.
+        //
+        Item->Next = NULL;
+
+        //
+        // FilePath is owned by the work item and is either NULL or a heap
+        // allocation performed by RevThreadPoolBackendSubmitFile().
+        //
+        if (Item->FilePath != NULL) {
+            free(Item->FilePath);
+            Item->FilePath = NULL;
+        }
+
+        free(Item);
+    }
+
+    Context->WorkTail = NULL;
+
+    LeaveCriticalSection(&Context->QueueLock);
+
+    //
+    // Destroy the queue lock and free the thread handle array and the
+    // backend context itself.
+    //
+    DeleteCriticalSection(&Context->QueueLock);
+
+    if (Context->WorkerThreads != NULL) {
+        free(Context->WorkerThreads);
+        Context->WorkerThreads = NULL;
+    }
+
+    free(Context);
+
+    Revision->BackendContext = NULL;
+
+    return TRUE;
+}
+
+/**
+ * Static vtable instance for the thread pool backend.
+ */
+static const REV_FILE_BACKEND_VTBL RevThreadPoolBackendVtable = {
+    RevThreadPoolBackendInitialize,
+    RevThreadPoolBackendSubmitFile,
+    RevThreadPoolBackendDrainAndShutdown
+};
+
+/**
+ * @brief Initializes the file processing backend for the current revision.
+ *
+ * This function selects an appropriate backend based on the revision
+ * configuration and initializes it. Currently, the default selection
+ * (RevFileBackendAuto) maps to the thread pool backend.
+ *
+ * @param Revision Supplies the revision instance.
+ *
+ * @return TRUE if the backend was initialized successfully, FALSE otherwise.
+ */
+_Must_inspect_result_
+BOOL
+RevInitializeFileBackend(
+    _Inout_ PREVISION Revision
+    )
+{
+    REV_FILE_BACKEND_KIND requested;
+    REV_FILE_BACKEND_KIND effective;
+    BOOL result = FALSE;
+
+    if (Revision == NULL) {
+        return FALSE;
+    }
+
+    requested = Revision->Config.BackendKind;
+
+    if (requested == RevFileBackendAuto) {
+        effective = RevFileBackendThreadPool;
+    } else {
+        effective = requested;
+    }
+
+    switch (effective) {
+
+    case RevFileBackendSynchronous:
+        Revision->BackendVtable = &RevSynchronousBackendVtable;
+        result = Revision->BackendVtable->Initialize(Revision);
+        break;
+
+    case RevFileBackendThreadPool:
+        Revision->BackendVtable = &RevThreadPoolBackendVtable;
+        result = Revision->BackendVtable->Initialize(Revision);
+        break;
+
+    // case RevFileBackendIocp:
+    // case RevFileBackendIoRing:
+    default:
+        RevLogWarning("Requested backend kind (%d) is not implemented yet. "
+                      "Falling back to synchronous backend.",
+                      (LONG)effective);
+        Revision->BackendVtable = &RevSynchronousBackendVtable;
+        result = Revision->BackendVtable->Initialize(Revision);
+        effective = RevFileBackendSynchronous;
+        break;
+    }
+
+    if (!result) {
+        Revision->BackendVtable = NULL;
+        Revision->BackendKind = RevFileBackendAuto;
+        return FALSE;
+    }
+
+    Revision->BackendKind = effective;
+
+    return TRUE;
+}
+
+/**
+ * @brief Drains and shuts down the file processing backend for the current
+ *        revision.
+ *
+ * @param Revision Supplies the revision instance.
+ *
+ * @return TRUE if the backend was shut down cleanly, FALSE otherwise.
+ */
+_Must_inspect_result_
+BOOL
+RevDrainAndShutdownFileBackend(
+    _Inout_ PREVISION Revision
+    )
+{
+    if (Revision == NULL || Revision->BackendVtable == NULL) {
+        return TRUE;
+    }
+
+    return Revision->BackendVtable->DrainAndShutdown(Revision);
+}
+
 /**
  * @brief This function is responsible for initializing the revision
  * system.
@@ -2263,153 +3105,186 @@ Exit:
  *
  * @return TRUE if succeeded, FALSE if failed.
  */
+_Must_inspect_result_
 BOOL
 RevInitializeRevision(
     _In_ PREVISION_CONFIG InitParams
     )
 {
-    BOOL status = TRUE;
-
-    if (Revision != NULL) {
-        RevLogError("The revision is already initialized.");
-        status = FALSE;
-        goto Exit;
-    }
+    PREVISION revision = NULL;
 
     if (InitParams == NULL || InitParams->RootDirectory == NULL) {
-
-        RevLogError("Invalid parameter/-s.");
-        status = FALSE;
-        goto Exit;
+        RevLogError("RevInitializeRevision received invalid Config.");
+        return FALSE;
     }
 
-    //
-    // Initialize the revision structure.
-    //
-
-    Revision = (PREVISION)malloc(sizeof(REVISION));
-    if (Revision == NULL) {
-        RevLogError("Failed to allocate memory for the global revision "
-                    "structure (%llu bytes).",
-                    sizeof(REVISION));
-        status = FALSE;
-        goto Exit;
+    revision = (PREVISION)malloc(sizeof(REVISION));
+    if (revision == NULL) {
+        RevLogError("Failed to allocate memory for REVISION.");
+        return FALSE;
     }
 
-    //
-    // Initialize the list of revision records and other fields.
-    //
-    RevInitializeListHead(&Revision->RevisionRecordListHead);
-    Revision->InitParams = *InitParams;
-    Revision->CountOfLinesTotal = 0;
-    Revision->CountOfLinesBlank = 0;
-    Revision->CountOfLinesComment = 0;
-    Revision->CountOfFiles = 0;
-    Revision->CountOfIgnoredFiles = 0;
+    ZeroMemory(revision, sizeof(REVISION));
 
-Exit:
-    return status;
+    revision->Config = *InitParams;
+
+    RevInitializeListHead(&revision->RevisionRecordListHead);
+
+    revision->CountOfLinesTotal = 0;
+    revision->CountOfLinesBlank = 0;
+    revision->CountOfLinesComment = 0;
+    revision->CountOfFiles = 0;
+    revision->CountOfIgnoredFiles = 0;
+
+    //
+    // The effective backend will be selected in RevInitializeFileBackend().
+    //
+    revision->BackendKind = InitParams->BackendKind;
+    revision->BackendVtable = NULL;
+    revision->BackendContext = NULL;
+
+    InitializeCriticalSection(&revision->StatsLock);
+
+    //
+    // Publish the global revision pointer.
+    //
+    RevisionState = revision;
+
+    //
+    // Initialize the extension hash table.
+    //
+    RevInitializeExtensionHashTable();
+
+    return TRUE;
 }
 
 /**
- * @brief This function is responsible for starting the revision system.
+ * @brief This function is responsible for starting the revision system and
+ *        initializing the file processing backend.
  *
  * It ensures that the system has been initialized correctly before
  * proceeding with its operations.
  *
- * The root path in Revision->InitParams.RootDirectory may be either:
+ * The root path in Revision->Config.RootDirectory may be either:
  *  - a directory path, in which case a directory enumeration is performed; or
  *  - a path to a single file, in which case only that file is revised.
  *
  * @return TRUE if succeeded, FALSE if failed.
  */
+_Must_inspect_result_
 BOOL
 RevStartRevision(
     VOID
     )
 {
     BOOL status = TRUE;
-    DWORD attributes = {0};
+    PREVISION revision = RevisionState;
+    DWORD attributes;
+    PWCHAR rootPath;
 
-    if (Revision == NULL || Revision->InitParams.RootDirectory == NULL) {
-        RevLogError("The revision is not initialized/initialized correctly.");
-        status = FALSE;
-        goto Exit;
+    if (revision == NULL) {
+        RevLogError("RevStartRevision called before RevInitializeRevision.");
+        return FALSE;
     }
 
-    attributes = GetFileAttributesW(Revision->InitParams.RootDirectory);
+    rootPath = revision->Config.RootDirectory;
+    if (rootPath == NULL) {
+        RevLogError("Revision config does not contain a RootDirectory.");
+        return FALSE;
+    }
 
+    if (!RevInitializeFileBackend(revision)) {
+        RevLogError("Failed to initialize the file processing backend.");
+        return FALSE;
+    }
+
+    attributes = GetFileAttributesW(rootPath);
     if (attributes == INVALID_FILE_ATTRIBUTES) {
-        RevLogError("The specified path \"%ls\" does not exist or is not "
-                    "accessible. The last known error: %ls.",
-                    Revision->InitParams.RootDirectory,
+
+        RevLogError("Failed to retrieve attributes for \"%ls\". Error: %ls.",
+                    rootPath,
                     RevGetLastKnownWin32Error());
+
         status = FALSE;
         goto Exit;
     }
 
-    //
-    // If the path is a directory, use the generic directory enumerator
-    // with the configured enumeration options.
-    //
-    if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
 
-        status = RevEnumerateDirectoryWithVisitor(
-            Revision->InitParams.RootDirectory,
-            RevRevisionFileVisitor,
-            NULL,
-            &Revision->InitParams.EnumerationOptions);
+        WIN32_FIND_DATAW findData;
 
-    } else {
+        const WCHAR *fileName = rootPath;
+        const WCHAR *lastBackslash = wcsrchr(rootPath, L'\\');
+        const WCHAR *lastForwardSlash = wcsrchr(rootPath, L'/');
+        const WCHAR *separator = lastBackslash;
 
-        //
-        // The path refers to a single file. In this case we mimic what the
-        // default visitor would do for files:
-        //  - check if the file extension is recognized;
-        //  - if yes, revise the file;
-        //  - if not, increment the ignored files counter.
-        //
-        PWCHAR fileName = Revision->InitParams.RootDirectory;
-        PWCHAR lastBackslash = wcsrchr(fileName, L'\\');
-        PWCHAR lastSlash = wcsrchr(fileName, L'/');
+        ZeroMemory(&findData, sizeof(findData));
+        findData.dwFileAttributes = attributes;
 
-        //
-        // Choose the last path separator of either kind, if present.
-        //
-        if (lastBackslash != NULL || lastSlash != NULL) {
+        if (lastForwardSlash != NULL &&
+            (separator == NULL || lastForwardSlash > separator)) {
 
-            PWCHAR lastSeparator = lastBackslash;
-
-            if (lastSeparator == NULL ||
-                (lastSlash != NULL && lastSlash > lastSeparator)) {
-
-                lastSeparator = lastSlash;
-            }
-
-            fileName = lastSeparator + 1;
+            separator = lastForwardSlash;
         }
 
-        if (RevShouldReviseFile(fileName)) {
+        if (separator != NULL && separator[1] != L'\0') {
+            fileName = separator + 1;
+        }
 
-            if (!RevReviseFile(Revision->InitParams.RootDirectory)) {
+        (void)wcsncpy_s(findData.cFileName,
+                        ARRAYSIZE(findData.cFileName),
+                        fileName,
+                        _TRUNCATE);
 
-                RevLogError("RevReviseFile failed to revise file \"%ls\".",
-                            Revision->InitParams.RootDirectory);
+        if (!RevShouldReviseFile(findData.cFileName)) {
 
-                //
-                // Keep status TRUE here to match the directory enumeration
-                // behavior, where individual file failures do not cause
-                // the entire revision to fail.
-                //
-            }
+            EnterCriticalSection(&revision->StatsLock);
+            revision->CountOfIgnoredFiles += 1;
+            LeaveCriticalSection(&revision->StatsLock);
 
         } else {
 
-            Revision->CountOfIgnoredFiles += 1;
+            if (revision->BackendVtable == NULL) {
+                RevLogError("File backend is not available.");
+                status = FALSE;
+                goto Exit;
+            }
+
+            if (!revision->BackendVtable->SubmitFile(revision,
+                                                     rootPath,
+                                                     &findData)) {
+
+                RevLogError("File backend failed to submit \"%ls\".",
+                            rootPath);
+                status = FALSE;
+
+                goto Exit;
+            }
+        }
+
+    } else {
+
+        ENUMERATION_OPTIONS options = revision->Config.EnumerationOptions;
+
+        if (!RevEnumerateDirectoryWithVisitor(rootPath,
+                                              RevRevisionFileVisitor,
+                                              revision,
+                                              &options)) {
+
+            RevLogError("Failed to start enumeration in directory \"%ls\".",
+                        rootPath);
+            status = FALSE;
+
+            goto Exit;
         }
     }
 
 Exit:
+
+    if (!RevDrainAndShutdownFileBackend(revision)) {
+        RevLogError("Failed to drain and shutdown file backend.");
+        status = FALSE;
+    }
 
     return status;
 }
@@ -2550,11 +3425,11 @@ RevFindRevisionRecordForLanguageByExtension(
         return NULL;
     }
 
-    assert(Revision != NULL);
+    assert(RevisionState != NULL);
 
-    entry = Revision->RevisionRecordListHead.Flink;
+    entry = RevisionState->RevisionRecordListHead.Flink;
 
-    while (entry != &Revision->RevisionRecordListHead) {
+    while (entry != &RevisionState->RevisionRecordListHead) {
         revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
 
         /*
@@ -2584,7 +3459,7 @@ RevFindRevisionRecordForLanguageByExtension(
     /*
      * Add the new revision record to the global list of revision records.
      */
-    RevInsertTailList(&Revision->RevisionRecordListHead,
+    RevInsertTailList(&RevisionState->RevisionRecordListHead,
                       &revisionRecord->ListEntry);
 
     return revisionRecord;
@@ -2644,7 +3519,7 @@ _Must_inspect_result_
 BOOL
 RevEnumerateDirectoryWithVisitor(
     _In_z_ PWCHAR RootDirectoryPath,
-    _In_ PREV_FILE_VISITOR Visitor,
+    _In_ PFILE_VISITOR Visitor,
     _Inout_opt_ PVOID Context,
     _In_opt_ PENUMERATION_OPTIONS Options
     )
@@ -2892,43 +3767,52 @@ RevRevisionFileVisitor(
     _Inout_opt_ PVOID Context
     )
 {
-    UNREFERENCED_PARAMETER(Context);
+    PREVISION revision = (PREVISION)Context;
+    BOOL isDirectory;
 
-    if (FullPath == NULL || FindData == NULL) {
-        RevLogError("RevRevisionFileVisitor received invalid parameter/-s.");
+    if (revision == NULL) {
+        revision = RevisionState;
+    }
+
+    if (FullPath == NULL || FindData == NULL || revision == NULL) {
         return FALSE;
     }
 
-    //
-    // Directories are not revised here; recursion is handled by the
-    // enumerator itself.
-    //
-    if (FindData->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+    isDirectory = (FindData->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+
+    if (isDirectory) {
+
+        //
+        // Subdirectories are handled by the enumerator; there is no work
+        // to submit for directories in this visitor.
+        //
+        return TRUE;
+
+    }
+
+    if (!RevShouldReviseFile(FindData->cFileName)) {
+
+        EnterCriticalSection(&revision->StatsLock);
+        revision->CountOfIgnoredFiles += 1;
+        LeaveCriticalSection(&revision->StatsLock);
+
         return TRUE;
     }
 
-    //
-    // For regular files, check whether the file should be revised based
-    // on its extension. RevShouldReviseFile() expects only the file name.
-    //
-    if (RevShouldReviseFile(FindData->cFileName)) {
+    if (revision->BackendVtable == NULL) {
 
-        if (!RevReviseFile(FullPath)) {
+        //
+        // Fallback: process immediately on the enumeration thread.
+        //
+        return RevReviseFile(FullPath);
+    }
 
-            RevLogError("RevReviseFile failed to revise file \"%ls\".",
-                        FullPath);
+    if (!revision->BackendVtable->SubmitFile(revision,
+                                             FullPath,
+                                             FindData)) {
 
-            //
-            // Do not stop enumeration on a single file failure. Other files
-            // may still be processed.
-            //
-        }
-
-    } else {
-
-        if (Revision != NULL) {
-            Revision->CountOfIgnoredFiles += 1;
-        }
+        RevLogError("File backend failed to submit \"%ls\".", FullPath);
+        return FALSE;
     }
 
     return TRUE;
@@ -3704,7 +4588,7 @@ RevCountLinesWithFamily(
  *
  * The function reads the file contents into memory, determines the
  * appropriate comment syntax based on the file extension and language
- * mapping, counts total/blank/comment lines and updates the global
+ * mapping, counts total/blank/comment lines, and updates the global
  * revision statistics.
  *
  * @param FilePath Supplies the path to the file to be revised.
@@ -3724,6 +4608,8 @@ RevReviseFile(
     COMMENT_STYLE_FAMILY languageFamily = RevLanguageFamilyUnknown;
     FILE_LINE_STATS fileLineStats = {0};
     FILE_BUFFER_VIEW view;
+
+    ZeroMemory(&view, sizeof(view));
 
     if (FilePath == NULL) {
         RevLogError("FilePath is NULL.");
@@ -3782,17 +4668,28 @@ RevReviseFile(
 
 UpdateStats:
 
+    if (RevisionState == NULL) {
+        goto Exit;
+    }
+
+    EnterCriticalSection(&RevisionState->StatsLock);
+
     //
     // Find or create a revision record for the given extension/language.
     //
     revisionRecord = RevFindRevisionRecordForLanguageByExtension(fileExtension);
+
     if (revisionRecord == NULL) {
 
         revisionRecord = RevInitializeRevisionRecord(fileExtension,
                                                      languageOrFileType);
+
         if (revisionRecord == NULL) {
             RevLogError("Failed to initialize a revision record for \"%ls\".",
                         fileExtension);
+
+            LeaveCriticalSection(&RevisionState->StatsLock);
+
             status = FALSE;
             goto Exit;
         }
@@ -3809,21 +4706,17 @@ UpdateStats:
     //
     // Update global statistics.
     //
-    if (Revision != NULL) {
-        Revision->CountOfFiles += 1;
-        Revision->CountOfLinesTotal += fileLineStats.CountOfLinesTotal;
-        Revision->CountOfLinesBlank += fileLineStats.CountOfLinesBlank;
-        Revision->CountOfLinesComment += fileLineStats.CountOfLinesComment;
-    }
+    RevisionState->CountOfFiles += 1;
+    RevisionState->CountOfLinesTotal += fileLineStats.CountOfLinesTotal;
+    RevisionState->CountOfLinesBlank += fileLineStats.CountOfLinesBlank;
+    RevisionState->CountOfLinesComment += fileLineStats.CountOfLinesComment;
+
+    LeaveCriticalSection(&RevisionState->StatsLock);
 
 Exit:
 
-    if (file != INVALID_HANDLE_VALUE) {
-        CloseHandle(file);
-    }
-
-    if (fileBuffer != NULL) {
-        free(fileBuffer);
+    if (view.Buffer != NULL) {
+        free(view.Buffer);
     }
 
     return status;
@@ -3861,9 +4754,9 @@ RevOutputRevisionStatistics(
     // for each one.
     //
 
-    entry = Revision->RevisionRecordListHead.Flink;
+    entry = RevisionState->RevisionRecordListHead.Flink;
 
-    while (entry != &Revision->RevisionRecordListHead) {
+    while (entry != &RevisionState->RevisionRecordListHead) {
 
         ULONGLONG total;
         ULONGLONG blank;
@@ -3908,9 +4801,9 @@ RevOutputRevisionStatistics(
         ULONGLONG comment;
         ULONGLONG code;
 
-        total = Revision->CountOfLinesTotal;
-        blank = Revision->CountOfLinesBlank;
-        comment = Revision->CountOfLinesComment;
+        total = RevisionState->CountOfLinesTotal;
+        blank = RevisionState->CountOfLinesBlank;
+        comment = RevisionState->CountOfLinesComment;
 
         if (total >= blank + comment) {
             code = total - blank - comment;
@@ -3920,7 +4813,7 @@ RevOutputRevisionStatistics(
 
         RevPrint(L"%-25s%10u%15llu%15llu%15llu%15llu\n",
                  L"Total:",
-                 Revision->CountOfFiles,
+                 RevisionState->CountOfFiles,
                  blank,
                  comment,
                  code,
@@ -3929,6 +4822,52 @@ RevOutputRevisionStatistics(
 
     RevPrint(L"----------------------------------------------------------------"
              "---------------------------------------------\n");
+}
+
+/**
+ * @brief Parses a backend kind name from a command line argument.
+ *
+ * The comparison is case-sensitive; accepted values are:
+ *   - L"auto"
+ *   - L"sync" or L"synchronous"
+ *   - L"threadpool"
+ *
+ * @param Value Supplies the backend name text.
+ *
+ * @param BackendKind Receives the parsed backend kind on success.
+ *
+ * @return TRUE if the backend name was recognized, FALSE otherwise.
+ */
+_Must_inspect_result_
+BOOL
+RevParseBackendKind(
+    _In_z_ PWCHAR Value,
+    _Out_ REV_FILE_BACKEND_KIND *BackendKind
+    )
+{
+    if (Value == NULL || BackendKind == NULL) {
+        return FALSE;
+    }
+
+    if (wcscmp(Value, L"auto") == 0) {
+
+        *BackendKind = RevFileBackendAuto;
+
+    } else if (wcscmp(Value, L"sync") == 0 ||
+               wcscmp(Value, L"synchronous") == 0) {
+
+        *BackendKind = RevFileBackendSynchronous;
+
+               } else if (wcscmp(Value, L"threadpool") == 0) {
+
+                   *BackendKind = RevFileBackendThreadPool;
+
+               } else {
+
+                   return FALSE;
+               }
+
+    return TRUE;
 }
 
 int
@@ -3998,26 +4937,28 @@ wmain(
     }
 
     if (argc > 2) {
-        /*
-         * It is expected that in the case of multiple command line arguments:
-         *  1) The first argument is the path to the root revision directory.
-         *  2) The remaining parameters are for optional revision configuration
-         *     overrides.
-         *
-         * Process additional parameters:
-         */
+        //
+        // It is expected that in the case of multiple command line arguments:
+        //  1) The first argument is the path to the root revision directory.
+        //  2) The remaining parameters are for optional revision configuration
+        //     overrides.
+        //
+        // Process additional parameters:
+        //
 
         for (index = 2; index < argc; index += 1) {
+
+            PWCHAR argument = argv[index];
 
             //
             // -v: Enable verbose mode.
             //
-            if (wcscmp(argv[index], L"-v") == 0) {
+            if (wcscmp(argument, L"-v") == 0) {
 
                 revisionConfig.IsVerboseMode = TRUE;
 
-            } else if (wcscmp(argv[index], L"-nr") == 0 ||
-                       wcscmp(argv[index], L"-norecurse") == 0) {
+            } else if (wcscmp(argument, L"-nr") == 0 ||
+                       wcscmp(argument, L"-norecurse") == 0) {
 
                 //
                 // -nr / -norecurse: do NOT recurse into subdirectories;
@@ -4026,26 +4967,96 @@ wmain(
                 revisionConfig.EnumerationOptions.
                                ShouldRecurseIntoSubdirectories = FALSE;
 
+            } else if (wcscmp(argument, L"-backend") == 0) {
+
+                PWCHAR backendName = NULL;
+
+                //
+                // -backend must be followed by a value: auto|sync|threadpool.
+                //
+                if (index + 1 >= argc) {
+
+                    RevLogError("Missing value for -backend option.");
+                    status = -1;
+                    goto Exit;
+                }
+
+                backendName = argv[index + 1];
+
+                if (!RevParseBackendKind(backendName,
+                                         &revisionConfig.BackendKind)) {
+
+                    RevLogError("Unknown backend type: %ls", backendName);
+                    status = -1;
+                    goto Exit;
+                }
+
+                //
+                // Consume the value as well.
+                //
+                index += 1;
+
+            } else if (wcscmp(argument, L"-threads") == 0) {
+
+                PWCHAR threadsValue = NULL;
+
+                //
+                // -threads must be followed by a positive integer value.
+                //
+                if (index + 1 >= argc) {
+
+                    RevLogError("Missing value for -threads option.");
+                    status = -1;
+                    goto Exit;
+                }
+
+                threadsValue = argv[index + 1]; {
+                    wchar_t *EndPointer = NULL;
+                    unsigned long threads = wcstoul(threadsValue,
+                                                    &EndPointer,
+                                                    10);
+
+                    //
+                    // Validate that the entire string parsed as a number,
+                    // and that the number is positive and fits in ULONG.
+                    //
+                    if (EndPointer == threadsValue ||
+                        *EndPointer != L'\0' ||
+                        threads == 0 ||
+                        threads > MAXDWORD) {
+
+                        RevLogError("Invalid value for -threads option: %ls",
+                                    threadsValue);
+                        status = -1;
+                        goto Exit;
+                    }
+
+                    revisionConfig.WorkerThreadCount = threads;
+                }
+
+                //
+                // Consume the value as well.
+                //
+                index += 1;
+
             } else {
 
                 //
                 // Unknown option.
                 //
-                RevLogWarning("Unknown command line option: %ls", argv[index]);
+                RevLogWarning("Unknown command line option: %ls", argument);
             }
-
         }
     }
 
 #ifndef NDEBUG
-    /*
-     * Always use verbose mode in debug builds.
-     */
+    //
+    // Always use verbose mode in debug builds unless it was explicitly
+    // enabled earlier (which results in the same value).
+    //
     if (revisionConfig.IsVerboseMode == FALSE) {
         revisionConfig.IsVerboseMode = TRUE;
     }
-#else
-    revisionConfig.IsVerboseMode = FALSE;
 #endif
 
     /*
@@ -4059,7 +5070,7 @@ wmain(
 
     if (!QueryPerformanceFrequency(&frequency)) {
         RevLogError("Failed to retrieve the frequency of the performance "
-                    "counter.");
+            "counter.");
         measuringTime = FALSE;
     }
 
@@ -4087,10 +5098,10 @@ wmain(
                    resultTime);
     }
 
-    if (Revision->CountOfIgnoredFiles > 0) {
+    if (RevisionState->CountOfIgnoredFiles > 0) {
         RevPrintEx(Cyan,
                    L"\tIgnored %d files\n",
-                   Revision->CountOfIgnoredFiles);
+                   RevisionState->CountOfIgnoredFiles);
     }
 
 #ifndef NDEBUG
