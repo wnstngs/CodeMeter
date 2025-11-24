@@ -1,43 +1,83 @@
 cmake_minimum_required(VERSION 3.26)
 project(CodeMeter C)
 
-option(BUILD_TESTS "Build the regression tests" ON)
-
-#
-# Build the MAIN executable
-#
 add_executable(CodeMeter
         codemeter.c
 )
+
 target_link_libraries(CodeMeter PRIVATE Pathcch.lib)
 
 if(MSVC)
-    target_compile_options(CodeMeter PRIVATE /W4 /WX)
-
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        target_compile_options(CodeMeter PRIVATE /DEBUG /Z7 /INCREMENTAL)
-    else()
-        target_compile_options(CodeMeter PRIVATE /O2)
-    endif()
-endif()
-
-if(BUILD_TESTS)
     #
-    # Build the TEST executable
+    # Common compile flags for all configurations
     #
-    add_executable(CodeMeterTest
-            tests.c
-            codemeter.c
-            codemeter.h
+
+    target_compile_options(CodeMeter PRIVATE
+            /W4
+            /WX
+            /permissive-
+            /Zc:preprocessor
+            /EHsc-
+            /FC
+            /diagnostics:column
     )
-    target_link_libraries(CodeMeterTest PRIVATE Pathcch.lib)
 
-    if(MSVC)
-        target_compile_options(CodeMeterTest PRIVATE /W4 /WX)
-        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-            target_compile_options(CodeMeterTest PRIVATE /DEBUG /Z7 /INCREMENTAL)
-        else()
-            target_compile_options(CodeMeterTest PRIVATE /O2)
-        endif()
-    endif()
+    #
+    # Configuration-specific compile flags
+    #
+
+    target_compile_options(CodeMeter PRIVATE
+            $<$<CONFIG:Debug>:
+            /Od
+            /Zi
+            /RTC1
+            /MDd
+            /sdl
+            /GS
+            >
+
+            $<$<CONFIG:RelWithDebInfo>:
+            /O2
+            /Zi
+            /MD
+            /GS
+            /sdl
+            /Gw
+            /Oi
+            >
+
+            $<$<CONFIG:Release>:
+            /O2
+            /MD
+            /GS
+            /Gw
+            /Oi
+            /Ot
+            >
+    )
+
+    #
+    # Linker flags per configuration
+    #
+    target_link_options(CodeMeter PRIVATE
+            $<$<CONFIG:Debug>:
+            /DEBUG
+            /INCREMENTAL
+            >
+
+            $<$<CONFIG:RelWithDebInfo>:
+            /DEBUG
+            /INCREMENTAL:NO
+            /LTCG
+            /OPT:REF
+            /OPT:ICF
+            >
+
+            $<$<CONFIG:Release>:
+            /INCREMENTAL:NO
+            /LTCG
+            /OPT:REF
+            /OPT:ICF
+            >
+    )
 endif()
