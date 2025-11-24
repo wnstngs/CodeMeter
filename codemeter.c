@@ -541,14 +541,18 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
 #define REV_EXTENSION_HASH_BUCKET_COUNT 1024u
 
 /**
- * @brief The string to be prepended to a path to avoid the MAX_PATH
- * limitation.
+ * Maximum length (in characters) of an extension key we support.
+ */
+#define REV_MAX_EXTENSION_CCH 64
+
+
+/**
+ * The string to be prepended to a path to avoid the MAX_PATH limitation.
  */
 #define MAX_PATH_FIX    L"\\\\?\\"
 
 /**
- * @brief The string to be appended to a path to indicate all of its
- * contents.
+ * The string to be appended to a path to indicate all of its contents.
  */
 #define ASTERISK        L"\\*"
 
@@ -614,7 +618,7 @@ const PWCHAR ConsoleForegroundColors[] = {
  * N.B. This table is intentionally small and data-driven.
  * Anything that does not match here is treated as C-style by default.
  */
-COMMENT_STYLE_MAPPING LanguageFamilyMappingTable[] = {
+const COMMENT_STYLE_MAPPING LanguageFamilyMappingTable[] = {
     {L"Python",         RevLanguageFamilyHashStyle},
     {L"Ruby",           RevLanguageFamilyHashStyle},
     {L"Perl",           RevLanguageFamilyHashStyle},
@@ -664,7 +668,7 @@ COMMENT_STYLE_MAPPING LanguageFamilyMappingTable[] = {
  * TODO: Sort the table by extension and use binary search.
  *       Or build a hash table on first use and look up in O(1).
  */
-REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
+const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".abap",               L"ABAP"},
     {L".asl",               L"ACPI Machine Language "},
     {L".ac",                 L"m4"},
@@ -1709,6 +1713,24 @@ RevInitializeRevisionRecord(
 COMMENT_STYLE_FAMILY
 RevGetLanguageFamily(
     _In_z_ PWCHAR LanguageOrFileType
+    );
+
+_Must_inspect_result_
+BOOL
+RevResolveExtensionForFileName(
+    _In_z_ const WCHAR *FileName,
+    _Out_writes_(ExtensionBufferCch) PWCHAR ExtensionBuffer,
+    _In_ SIZE_T ExtensionBufferCch,
+    _Outptr_result_maybenull_ PWCHAR *LanguageOrFileType
+    );
+
+_Must_inspect_result_
+BOOL
+RevResolveExtensionForPath(
+    _In_z_ const WCHAR *FilePath,
+    _Out_writes_(ExtensionBufferCch) PWCHAR ExtensionBuffer,
+    _In_ SIZE_T ExtensionBufferCch,
+    _Outptr_result_maybenull_ PWCHAR *LanguageOrFileType
     );
 
 _Ret_maybenull_
@@ -3329,6 +3351,195 @@ RevInitializeRevisionRecord(
 }
 
 /**
+ * @brief Resolve the canonical extension key and language for a bare file name.
+ *
+ * This function interprets the supplied file name according to the
+ * ExtensionMappingTable semantics:
+ *
+ *   1. It first tries a "whole-name" key of the form ".<FileName>".
+ *      This enables entries such as ".CMakeLists.txt", ".Dockerfile",
+ *      ".Makefile", etc., to match file names directly.
+ *
+ *   2. If that fails, it scans the file name from the first '.' towards
+ *      the end, and for each dot considers the suffix starting at that
+ *      dot as a candidate extension (e.g., ".rst.txt", ".txt").
+ *      The first candidate that maps to a known language/file type is
+ *      selected. This naturally prefers more specific multi-dot
+ *      extensions over shorter ones.
+ *
+ * @param FileName Supplies the file name (no path).
+ *
+ * @param ExtensionBuffer Receives the canonical extension key (e.g. ".c",
+ *        ".CMakeLists.txt", ".rst.txt").
+ *
+ * @param ExtensionBufferCch Supplies the size of ExtensionBuffer in WCHARs.
+ *
+ * @param LanguageOrFileType Receives a pointer to the mapped language or
+ *        file type string if successful; may be NULL if caller is not
+ *        interested in the language.
+ *
+ * @return TRUE if a known extension/language was resolved, FALSE otherwise.
+ */
+_Must_inspect_result_
+BOOL
+RevResolveExtensionForFileName(
+    _In_z_ const WCHAR *FileName,
+    _Out_writes_(ExtensionBufferCch) PWCHAR ExtensionBuffer,
+    _In_ SIZE_T ExtensionBufferCch,
+    _Outptr_result_maybenull_ PWCHAR *LanguageOrFileType
+    )
+{
+    SIZE_T length = 0;
+    PWCHAR language = NULL;
+    const WCHAR *scan = NULL;
+    const WCHAR *dot = NULL;
+
+    if (LanguageOrFileType != NULL) {
+        *LanguageOrFileType = NULL;
+    }
+
+    if (FileName == NULL ||
+        ExtensionBuffer == NULL ||
+        ExtensionBufferCch < 4) {
+
+        return FALSE;
+    }
+
+    ExtensionBuffer[0] = L'\0';
+
+    length = wcslen(FileName);
+    if (length == 0) {
+        return FALSE;
+    }
+
+    //
+    // Step 1: try a whole-name key ".<FileName>".
+    // This allows entries like ".CMakeLists.txt", ".Dockerfile", ".Makefile"
+    // to match directly.
+    //
+    if (length + 2 <= ExtensionBufferCch) {
+
+        ExtensionBuffer[0] = L'.';
+
+        memcpy(ExtensionBuffer + 1,
+               FileName,
+               length * sizeof(WCHAR));
+
+        ExtensionBuffer[length + 1] = L'\0';
+
+        language = RevMapExtensionToLanguage(ExtensionBuffer);
+
+        if (language != NULL) {
+
+            if (LanguageOrFileType != NULL) {
+                *LanguageOrFileType = language;
+            }
+
+            return TRUE;
+        }
+    }
+
+    //
+    // Step 2: scan for multi-dot and single-dot suffixes.
+    // We start at the first '.' and move forward. The first suffix that
+    // maps to a known language wins (the longest match by construction).
+    //
+    scan = FileName;
+    dot = wcschr(scan, L'.');
+
+    while (dot != NULL) {
+
+        SIZE_T suffixLength = length - (SIZE_T)(dot - FileName);
+
+        if (suffixLength + 1 <= ExtensionBufferCch) {
+
+            memcpy(ExtensionBuffer,
+                   dot,
+                   suffixLength * sizeof(WCHAR));
+
+            ExtensionBuffer[suffixLength] = L'\0';
+
+            language = RevMapExtensionToLanguage(ExtensionBuffer);
+
+            if (language != NULL) {
+
+                if (LanguageOrFileType != NULL) {
+                    *LanguageOrFileType = language;
+                }
+
+                return TRUE;
+            }
+        }
+
+        scan = dot + 1;
+        dot = wcschr(scan, L'.');
+    }
+
+    //
+    // No known extension mapping.
+    //
+    ExtensionBuffer[0] = L'\0';
+
+    return FALSE;
+}
+
+/**
+ * @brief Resolve the canonical extension key and language for a full file path.
+ *
+ * This helper extracts the last path component from FilePath and then calls
+ * RevResolveExtensionForFileName(). It understands both '\\' and '/' as
+ * directory separators.
+ *
+ * @param FilePath Supplies the full path to the file.
+ *
+ * @param ExtensionBuffer Receives the canonical extension key.
+ *
+ * @param ExtensionBufferCch Supplies the size of ExtensionBuffer in WCHARs.
+ *
+ * @param LanguageOrFileType Receives a pointer to the mapped language or
+ *        file type string if successful; may be NULL if caller is not
+ *        interested in the language.
+ *
+ * @return TRUE if a known extension/language was resolved, FALSE otherwise.
+ */
+_Must_inspect_result_
+BOOL
+RevResolveExtensionForPath(
+    _In_z_ const WCHAR *FilePath,
+    _Out_writes_(ExtensionBufferCch) PWCHAR ExtensionBuffer,
+    _In_ SIZE_T ExtensionBufferCch,
+    _Outptr_result_maybenull_ PWCHAR *LanguageOrFileType
+    )
+{
+    const WCHAR *fileName = FilePath;
+    const WCHAR *lastBackslash = NULL;
+    const WCHAR *lastSlash = NULL;
+    const WCHAR *separator = NULL;
+
+    if (FilePath == NULL) {
+        return FALSE;
+    }
+
+    lastBackslash = wcsrchr(FilePath, L'\\');
+    lastSlash = wcsrchr(FilePath, L'/');
+
+    separator = lastBackslash;
+
+    if (lastSlash != NULL && (separator == NULL || lastSlash > separator)) {
+        separator = lastSlash;
+    }
+
+    if (separator != NULL && separator[1] != L'\0') {
+        fileName = separator + 1;
+    }
+
+    return RevResolveExtensionForFileName(fileName,
+                                          ExtensionBuffer,
+                                          ExtensionBufferCch,
+                                          LanguageOrFileType);
+}
+
+/**
  * This function maps a file extension to a language/file type.
  *
  * @param Extension Supplies the file extension (e.g. L".c").
@@ -3821,8 +4032,13 @@ RevRevisionFileVisitor(
 /**
  * @brief This function checks whether the specified file should be revised.
  *
- * The file is considered for revision if its extension is recognized in the
- * ExtensionMappingTable.
+ * The file is considered for revision if its name/extension can be resolved
+ * to a known language/file type using the ExtensionMappingTable. This
+ * includes:
+ *   - Conventional extensions (".c", ".cpp", ".js", ...)
+ *   - Multi-dot extensions (".rst.txt", ".config.js", ".glide.lock", ...)
+ *   - Special whole-name mappings (".CMakeLists.txt", ".Dockerfile",
+ *     ".Makefile", etc.) via the ".<FileName>" key convention.
  *
  * @param FileName Supplies the file name (without path).
  *
@@ -3834,33 +4050,24 @@ RevShouldReviseFile(
     _In_z_ const WCHAR *FileName
     )
 {
-    PWCHAR fileExtension = NULL;
-    PWCHAR languageOrFileType = NULL;
+    BOOL status = FALSE;
+    WCHAR extensionBuffer[REV_MAX_EXTENSION_CCH];
 
     if (FileName == NULL) {
         RevLogError("FileName is NULL.");
-        return FALSE;
+        return status;
     }
 
     //
-    // Find the file extension.
+    // If the extension (in the generalized sense described above) can be
+    // resolved to a known language or file type, we should revise the file.
     //
-    fileExtension = wcsrchr(FileName, L'.');
-    if (fileExtension == NULL) {
-        RevLogWarning("Failed to determine the extension for the file \"%ls\".",
-                      FileName);
-        return FALSE;
-    }
+    status = RevResolveExtensionForFileName(FileName,
+                                            extensionBuffer,
+                                            ARRAYSIZE(extensionBuffer),
+                                            NULL);
 
-    //
-    // Check if the extension can be mapped to a known language/file type.
-    //
-    languageOrFileType = RevMapExtensionToLanguage(fileExtension);
-    if (languageOrFileType == NULL) {
-        return FALSE;
-    }
-
-    return TRUE;
+    return status;
 }
 
 /**
@@ -4603,11 +4810,11 @@ RevReviseFile(
 {
     BOOL status = TRUE;
     PREVISION_RECORD revisionRecord = NULL;
-    PWCHAR fileExtension = NULL;
     PWCHAR languageOrFileType = NULL;
     COMMENT_STYLE_FAMILY languageFamily = RevLanguageFamilyUnknown;
     FILE_LINE_STATS fileLineStats = {0};
     FILE_BUFFER_VIEW view;
+    WCHAR extensionBuffer[REV_MAX_EXTENSION_CCH];
 
     ZeroMemory(&view, sizeof(view));
 
@@ -4618,24 +4825,21 @@ RevReviseFile(
     }
 
     //
-    // Determine the file extension and mapping before reading.
+    // Resolve the canonical extension key and language before reading.
+    // This ensures consistent handling of multi-dot and special whole-name
+    // mappings.
     //
-    fileExtension = wcsrchr(FilePath, L'.');
-    if (fileExtension == NULL) {
-        RevLogWarning("Failed to determine the extension for the file \"%ls\".",
-                      FilePath);
-        status = FALSE;
-        goto UpdateStats;
-    }
+    if (!RevResolveExtensionForPath(FilePath,
+                                    extensionBuffer,
+                                    ARRAYSIZE(extensionBuffer),
+                                    &languageOrFileType)) {
 
-    languageOrFileType = RevMapExtensionToLanguage(fileExtension);
-    if (languageOrFileType == NULL) {
         //
-        // Should not normally reach here because RevShouldReviseFile()
-        // already filtered by extension.
+        // This should not normally happen because RevShouldReviseFile()
+        // filters by extension ahead of time, but we still handle it
+        // gracefully for robustness.
         //
-        RevLogWarning("No language mapping found for extension \"%ls\".",
-                      fileExtension);
+        RevLogWarning("No language mapping found for \"%ls\".", FilePath);
         status = FALSE;
         goto UpdateStats;
     }
@@ -4677,16 +4881,17 @@ UpdateStats:
     //
     // Find or create a revision record for the given extension/language.
     //
-    revisionRecord = RevFindRevisionRecordForLanguageByExtension(fileExtension);
+    revisionRecord =
+        RevFindRevisionRecordForLanguageByExtension(extensionBuffer);
 
     if (revisionRecord == NULL) {
 
-        revisionRecord = RevInitializeRevisionRecord(fileExtension,
+        revisionRecord = RevInitializeRevisionRecord(extensionBuffer,
                                                      languageOrFileType);
 
         if (revisionRecord == NULL) {
             RevLogError("Failed to initialize a revision record for \"%ls\".",
-                        fileExtension);
+                        extensionBuffer);
 
             LeaveCriticalSection(&RevisionState->StatsLock);
 
