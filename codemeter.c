@@ -62,28 +62,28 @@ typedef struct ENUMERATION_OPTIONS {
 /**
  * This enumeration stores file processing backend kind for the revision engine.
  */
-typedef enum REV_FILE_BACKEND_KIND {
+typedef enum REVISION_FILE_BACKEND_KIND {
     /**
      * Choose the best available backend for this platform.
      */
-    RevFileBackendAuto = 0,
+    FileBackendAuto = 0,
 
     /**
      * Process files on the enumeration thread.
      */
-    RevFileBackendSynchronous,
+    FileBackendSynchronous,
 
     /**
      * Process files on a dedicated worker thread pool.
      */
-    RevFileBackendThreadPool,
+    FileBackendThreadPool,
 
     // Reserved for future asynchronous backends:
     // RevFileBackendIocp,
     // RevFileBackendIoRing,
 
-    RevFileBackendMax
-} REV_FILE_BACKEND_KIND;
+    FileBackendMax
+} REVISION_FILE_BACKEND_KIND;
 
 
 /**
@@ -107,11 +107,11 @@ typedef struct REVISION_CONFIG {
     ENUMERATION_OPTIONS EnumerationOptions;
 
     /**
-     * File processing backend kind. If RevFileBackendAuto is specified
+     * File processing backend kind. If FileBackendAuto is specified
      * (the default when zero-initialized), the engine will choose the
      * most appropriate backend for the current platform.
      */
-    REV_FILE_BACKEND_KIND BackendKind;
+    REVISION_FILE_BACKEND_KIND BackendKind;
 
     /**
      * Desired worker thread count for backends that support it
@@ -224,7 +224,7 @@ typedef struct REVISION {
     /**
      * Effective backend kind chosen for this revision.
      */
-    REV_FILE_BACKEND_KIND BackendKind;
+    REVISION_FILE_BACKEND_KIND BackendKind;
 
     /**
      * Backend vtable used to schedule and execute per-file processing.
@@ -566,7 +566,7 @@ const WCHAR UsageString[] =
     "\tIn order to count the number of lines of CodeMeter code, you need\n"
     "\tthe path to the root directory of the project you want to revise.\n"
     "\tThe path should be passed as the first argument of the command line:\n\n\t"
-    "CodeMeter.exe \"C:\\\\MyProject\" -v -backend threadpool -nr\n\n"
+    "CodeMeter.exe \"C:\\\\MyProject\" -v -b tp -nr\n\n"
     "OPTIONS:\n\n"
     "\t-help, -h, -?\n"
     "\t    Print a help message and exit.\n\n"
@@ -575,7 +575,7 @@ const WCHAR UsageString[] =
     "\t-nr, -norecurse\n"
     "\t    Do not recurse into subdirectories; only process the\n"
     "\t    top-level directory.\n\n"
-    "\t-backend <auto|sync|threadpool>\n"
+    "\t-b, -backend <auto|sync|{threadpool/tp}>\n"
     "\t    Select the file processing backend. Default is 'auto'.\n\n"
     "\t-threads <N>\n"
     "\t    Limit the number of worker threads used by the backend.\n"
@@ -1857,7 +1857,7 @@ _Must_inspect_result_
 BOOL
 RevParseBackendKind(
     _In_z_ PWCHAR Value,
-    _Out_ REV_FILE_BACKEND_KIND *BackendKind
+    _Out_ REVISION_FILE_BACKEND_KIND *BackendKind
     );
 
 //
@@ -3310,7 +3310,7 @@ static const REVISION_FILE_BACKEND_VTABLE RevThreadPoolBackendVtable = {
  *
  * This function selects an appropriate backend based on the revision
  * configuration and initializes it. Currently, the default selection
- * (RevFileBackendAuto) maps to the thread pool backend.
+ * (FileBackendAuto) maps to the thread pool backend.
  *
  * @param Revision Supplies the revision instance.
  *
@@ -3322,8 +3322,8 @@ RevInitializeFileBackend(
     _Inout_ PREVISION Revision
     )
 {
-    REV_FILE_BACKEND_KIND requested;
-    REV_FILE_BACKEND_KIND effective;
+    REVISION_FILE_BACKEND_KIND requested;
+    REVISION_FILE_BACKEND_KIND effective;
     BOOL result = FALSE;
 
     if (Revision == NULL) {
@@ -3332,20 +3332,20 @@ RevInitializeFileBackend(
 
     requested = Revision->Config.BackendKind;
 
-    if (requested == RevFileBackendAuto) {
-        effective = RevFileBackendThreadPool;
+    if (requested == FileBackendAuto) {
+        effective = FileBackendThreadPool;
     } else {
         effective = requested;
     }
 
     switch (effective) {
 
-    case RevFileBackendSynchronous:
+    case FileBackendSynchronous:
         Revision->BackendVtable = &RevSynchronousBackendVtable;
         result = Revision->BackendVtable->Initialize(Revision);
         break;
 
-    case RevFileBackendThreadPool:
+    case FileBackendThreadPool:
         Revision->BackendVtable = &RevThreadPoolBackendVtable;
         result = Revision->BackendVtable->Initialize(Revision);
         //
@@ -3357,7 +3357,7 @@ RevInitializeFileBackend(
                           "falling back to synchronous backend.");
             Revision->BackendVtable = &RevSynchronousBackendVtable;
             result = Revision->BackendVtable->Initialize(Revision);
-            effective = RevFileBackendSynchronous;
+            effective = FileBackendSynchronous;
         }
         break;
 
@@ -3369,13 +3369,13 @@ RevInitializeFileBackend(
                       (LONG)effective);
         Revision->BackendVtable = &RevSynchronousBackendVtable;
         result = Revision->BackendVtable->Initialize(Revision);
-        effective = RevFileBackendSynchronous;
+        effective = FileBackendSynchronous;
         break;
     }
 
     if (!result) {
         Revision->BackendVtable = NULL;
-        Revision->BackendKind = RevFileBackendAuto;
+        Revision->BackendKind = FileBackendAuto;
         return FALSE;
     }
 
@@ -5391,7 +5391,7 @@ _Must_inspect_result_
 BOOL
 RevParseBackendKind(
     _In_z_ PWCHAR Value,
-    _Out_ REV_FILE_BACKEND_KIND *BackendKind
+    _Out_ REVISION_FILE_BACKEND_KIND *BackendKind
     )
 {
     if (Value == NULL || BackendKind == NULL) {
@@ -5400,16 +5400,17 @@ RevParseBackendKind(
 
     if (wcscmp(Value, L"auto") == 0) {
 
-        *BackendKind = RevFileBackendAuto;
+        *BackendKind = FileBackendAuto;
 
     } else if (wcscmp(Value, L"sync") == 0 ||
                wcscmp(Value, L"synchronous") == 0) {
 
-        *BackendKind = RevFileBackendSynchronous;
+        *BackendKind = FileBackendSynchronous;
 
-    } else if (wcscmp(Value, L"threadpool") == 0) {
+    } else if (wcscmp(Value, L"threadpool") == 0 ||
+               wcscmp(Value, L"tp")) {
 
-        *BackendKind = RevFileBackendThreadPool;
+        *BackendKind = FileBackendThreadPool;
 
     } else {
 
@@ -5518,12 +5519,13 @@ wmain(
                 revisionConfig.EnumerationOptions.
                                ShouldRecurseIntoSubdirectories = FALSE;
 
-            } else if (wcscmp(argument, L"-backend") == 0) {
+            } else if (wcscmp(argument, L"-backend") == 0 ||
+                       wcscmp(argument, L"-b") == 0) {
 
                 PWCHAR backendName = NULL;
 
                 //
-                // -backend must be followed by a value: auto|sync|threadpool.
+                // -backend/-b must be followed by a value: auto|sync|threadpool.
                 //
                 if (index + 1 >= argc) {
 
