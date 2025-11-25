@@ -179,7 +179,7 @@ typedef struct REVISION_RECORD {
 // This is a forward declaration of the backend vtable type so that REVISION can
 // refer to it via a pointer.
 //
-struct REV_FILE_BACKEND_VTBL;
+struct REVISION_FILE_BACKEND_VTABLE;
 
 /**
  * This structure represents a single revision run over a project.
@@ -228,7 +228,7 @@ typedef struct REVISION {
     /**
      * Backend vtable used to schedule and execute per-file processing.
      */
-    const struct REV_FILE_BACKEND_VTBL *BackendVtable;
+    const struct REVISION_FILE_BACKEND_VTABLE *BackendVtable;
 
     /**
      * Opaque backend-specific context (e.g. thread pool state).
@@ -250,7 +250,7 @@ typedef struct REVISION {
  * Backends are responsible for scheduling and executing RevReviseFile()
  * calls, possibly on a different set of threads.
  */
-typedef struct REV_FILE_BACKEND_VTBL {
+typedef struct REVISION_FILE_BACKEND_VTABLE {
     /**
      * @brief Initializes the backend for the given revision.
      *
@@ -296,17 +296,17 @@ typedef struct REV_FILE_BACKEND_VTBL {
     (*DrainAndShutdown)(
         _Inout_ PREVISION Revision
         );
-} REV_FILE_BACKEND_VTBL, *PREV_FILE_BACKEND_VTBL;
+} REVISION_FILE_BACKEND_VTABLE, *PREVISION_FILE_BACKEND_VTABLE;
 
 /**
  * @brief Work item used by the thread pool backend to represent a single file.
  */
-typedef struct REV_THREAD_POOL_WORK_ITEM {
+typedef struct REVISION_THREAD_POOL_WORK_ITEM {
 
     /**
      * Pointer to the next work item in the queue.
      */
-    struct REV_THREAD_POOL_WORK_ITEM *Next;
+    struct REVISION_THREAD_POOL_WORK_ITEM *Next;
 
     /**
      * Full path to the file to revise. The string is owned by the work
@@ -319,7 +319,7 @@ typedef struct REV_THREAD_POOL_WORK_ITEM {
      */
     WIN32_FIND_DATAW FindData;
 
-} REV_THREAD_POOL_WORK_ITEM, *PREV_THREAD_POOL_WORK_ITEM;
+} REVISION_THREAD_POOL_WORK_ITEM, *PREVISION_THREAD_POOL_WORK_ITEM;
 
 /**
  * @brief Backend context for the thread pool implementation.
@@ -327,7 +327,7 @@ typedef struct REV_THREAD_POOL_WORK_ITEM {
  * The context is opaque to the rest of the engine and is stored in
  * Revision->BackendContext.
  */
-typedef struct REV_THREAD_POOL_BACKEND_CONTEXT {
+typedef struct REVISION_THREAD_POOL_BACKEND_CONTEXT {
 
     /**
      * Array of worker thread handles.
@@ -342,12 +342,12 @@ typedef struct REV_THREAD_POOL_BACKEND_CONTEXT {
     /**
      * Singly linked list representing the work queue head.
      */
-    PREV_THREAD_POOL_WORK_ITEM WorkHead;
+    PREVISION_THREAD_POOL_WORK_ITEM WorkHead;
 
     /**
      * Pointer to the tail of the work queue.
      */
-    PREV_THREAD_POOL_WORK_ITEM WorkTail;
+    PREVISION_THREAD_POOL_WORK_ITEM WorkTail;
 
     /**
      * Protects the work queue and related state.
@@ -374,7 +374,7 @@ typedef struct REV_THREAD_POOL_BACKEND_CONTEXT {
      */
     ULONG ActiveWorkers;
 
-} REV_THREAD_POOL_BACKEND_CONTEXT, *PREV_THREAD_POOL_BACKEND_CONTEXT;
+} REVISION_THREAD_POOL_BACKEND_CONTEXT, *PREVISION_THREAD_POOL_BACKEND_CONTEXT;
 
 /**
  * This structure holds per-file line statistics.
@@ -441,56 +441,56 @@ typedef struct FILE_BUFFER_VIEW {
  * comment parsing.
  */
 typedef enum COMMENT_STYLE_FAMILY {
-    RevLanguageFamilyUnknown = 0,
+    LanguageFamilyUnknown = 0,
 
     /**
      * C-like syntax:
      *   - Line comments:   // ...
      *   - Block comments:  /* ... *\/
      */
-    RevLanguageFamilyCStyle,
+    LanguageFamilyCStyle,
 
     /**
      * Hash-style line comments:
      *   - Line comments:   # ...
      */
-    RevLanguageFamilyHashStyle,
+    LanguageFamilyHashStyle,
 
     /**
      * Double-dash line comments:
      *   - Line comments:   -- ...
      *     (SQL, Haskell, etc.)
      */
-    RevLanguageFamilyDoubleDash,
+    LanguageFamilyDoubleDash,
 
     /**
      * Semicolon line comments:
      *   - Line comments:   ; ...
      *     (some Lisps, assembly dialects, etc.)
      */
-    RevLanguageFamilySemicolon,
+    LanguageFamilySemicolon,
 
     /**
      * Percent-style line comments:
      *   - Line comments:   % ...
      *     (TeX/LaTeX, MATLAB, Octave, PostScript, etc.)
      */
-    RevLanguageFamilyPercent,
+    LanguageFamilyPercent,
 
     /**
      * XML-style block comments:
      *   - Block comments:  <!-- ... -->
      *     (XML, HTML, XAML, XSLT, etc.)
      */
-    RevLanguageFamilyXmlStyle,
+    LanguageFamilyXmlStyle,
 
     /**
      * Languages with no recognized comment syntax.
      * Everything that is not whitespace is treated as code.
      */
-    RevLanguageFamilyNoComments,
+    LanguageFamilyNoComments,
 
-    RevLanguageFamilyMax
+    LanguageFamilyMax
 } COMMENT_STYLE_FAMILY;
 
 /**
@@ -519,7 +519,7 @@ typedef struct COMMENT_STYLE_MAPPING {
 typedef BOOL (*PFILE_VISITOR)(
     _In_z_ PWCHAR FullPath,
     _In_ const WIN32_FIND_DATAW *FindData,
-    _Inout_opt_ PVOID Context
+    _In_opt_ PVOID Context
     );
 
 /**
@@ -538,12 +538,12 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
 // ------------------------------------------------------- Constants and Globals
 //
 
-#define REV_EXTENSION_HASH_BUCKET_COUNT 1024u
+#define EXTENSION_HASH_BUCKET_COUNT 1024u
 
 /**
  * Maximum length (in characters) of an extension key we support.
  */
-#define REV_MAX_EXTENSION_CCH 64
+#define MAX_EXTENSION_CCH 64
 
 
 /**
@@ -619,54 +619,47 @@ const PWCHAR ConsoleForegroundColors[] = {
  * Anything that does not match here is treated as C-style by default.
  */
 const COMMENT_STYLE_MAPPING LanguageFamilyMappingTable[] = {
-    {L"Python",         RevLanguageFamilyHashStyle},
-    {L"Ruby",           RevLanguageFamilyHashStyle},
-    {L"Perl",           RevLanguageFamilyHashStyle},
-    {L"Shell",          RevLanguageFamilyHashStyle},
-    {L"bash",           RevLanguageFamilyHashStyle},
-    {L"make",           RevLanguageFamilyHashStyle},
-    {L"Make",           RevLanguageFamilyHashStyle},
-    {L"PowerShell",     RevLanguageFamilyHashStyle},
-    {L"Raku",           RevLanguageFamilyHashStyle},
-    {L"awk",            RevLanguageFamilyHashStyle},
+    {L"Python",         LanguageFamilyHashStyle},
+    {L"Ruby",           LanguageFamilyHashStyle},
+    {L"Perl",           LanguageFamilyHashStyle},
+    {L"Shell",          LanguageFamilyHashStyle},
+    {L"bash",           LanguageFamilyHashStyle},
+    {L"make",           LanguageFamilyHashStyle},
+    {L"Make",           LanguageFamilyHashStyle},
+    {L"PowerShell",     LanguageFamilyHashStyle},
+    {L"Raku",           LanguageFamilyHashStyle},
+    {L"awk",            LanguageFamilyHashStyle},
 
-    {L"SQL",            RevLanguageFamilyDoubleDash},
-    {L"Haskell",        RevLanguageFamilyDoubleDash},
+    {L"SQL",            LanguageFamilyDoubleDash},
+    {L"Haskell",        LanguageFamilyDoubleDash},
 
-    {L"Lisp",           RevLanguageFamilySemicolon},
-    {L"Scheme",         RevLanguageFamilySemicolon},
-    {L"Assembly",       RevLanguageFamilySemicolon},
+    {L"Lisp",           LanguageFamilySemicolon},
+    {L"Scheme",         LanguageFamilySemicolon},
+    {L"Assembly",       LanguageFamilySemicolon},
 
     //
     // Percent-style languages.
     //
-    {L"TeX",            RevLanguageFamilyPercent},
-    {L"LaTeX",          RevLanguageFamilyPercent},
-    {L"MATLAB",         RevLanguageFamilyPercent},
-    {L"Octave",         RevLanguageFamilyPercent},
-    {L"PostScript",     RevLanguageFamilyPercent},
+    {L"TeX",            LanguageFamilyPercent},
+    {L"LaTeX",          LanguageFamilyPercent},
+    {L"MATLAB",         LanguageFamilyPercent},
+    {L"Octave",         LanguageFamilyPercent},
+    {L"PostScript",     LanguageFamilyPercent},
 
     //
     // XML-style block comment languages.
     // HTML is treated similarly here; script/style blocks aren't special-cased.
     //
-    {L"XML",            RevLanguageFamilyXmlStyle},
-    {L"HTML",           RevLanguageFamilyXmlStyle},
-    {L"XHTML",          RevLanguageFamilyXmlStyle},
-    {L"XAML",           RevLanguageFamilyXmlStyle},
-    {L"XSLT",           RevLanguageFamilyXmlStyle},
+    {L"XML",            LanguageFamilyXmlStyle},
+    {L"HTML",           LanguageFamilyXmlStyle},
+    {L"XHTML",          LanguageFamilyXmlStyle},
+    {L"XAML",           LanguageFamilyXmlStyle},
+    {L"XSLT",           LanguageFamilyXmlStyle},
 };
 
 /**
  * Mapping of file extensions that can be recognized to
  * human-readable descriptions of file types.
- *
- * TODO: Multi-dot extensions are commented out, we need to add support
- *       for them. The current algorithm counts everything after the last
- *       dot as an extension.
- *
- * TODO: Sort the table by extension and use binary search.
- *       Or build a hash table on first use and look up in O(1).
  */
 const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".abap",               L"ABAP"},
@@ -732,8 +725,8 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".btm",                L"DOS Batch"},
     {L".BTM",                L"DOS Batch"},
     {L".blade",              L"Blade"},
-//    {L".blade.php",          L"Blade"},
-//    {L".build.xml",          L"Ant"},
+    {L".blade.php",          L"Blade"},
+    {L".build.xml",          L"Ant"},
     {L".b",                  L"Brainfuck"},
     {L".bf",                 L"Brainfuck"},
     {L".brs",                L"BrightScript"},
@@ -768,19 +761,19 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".cfm",                L"ColdFusion"},
     {L".chpl",               L"Chapel"},
     {L".cl",                 L"Lisp/OpenCL"},
-//    {L".riemann.config",     L"Clojure"},
+    {L".riemann.config",     L"Clojure"},
     {L".hic",                L"Clojure"},
     {L".cljx",               L"Clojure"},
     {L".cljscm",             L"Clojure"},
-//    {L".cljs.hl",            L"Clojure"},
+    {L".cljs.hl",            L"Clojure"},
     {L".cl2",                L"Clojure"},
     {L".boot",               L"Clojure"},
     {L".clj",                L"Clojure"},
     {L".cljs",               L"ClojureScript"},
     {L".cljc",               L"ClojureC"},
     {L".cls",                L"Visual Basic/TeX/Apex Class"},
-//    {L".cmake.in",           L"CMake"},
-//    {L".CMakeLists.txt",     L"CMake"},
+    {L".cmake.in",           L"CMake"},
+    {L".CMakeLists.txt",     L"CMake"},
     {L".cmake",              L"CMake"},
     {L".cob",                L"COBOL"},
     {L".COB",                L"COBOL"},
@@ -801,7 +794,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".CPP",                L"C++"},
     {L".cr",                 L"Crystal"},
     {L".cs",                 L"C#/Smalltalk"},
-//    {L".designer.cs",        L"C# Designer"},
+    {L".designer.cs",        L"C# Designer"},
     {L".cake",               L"Cake Build Script"},
     {L".csh",                L"C Shell"},
     {L".cson",               L"CSON"},
@@ -851,11 +844,11 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".ERB",                L"ERB"},
     {L".yrl",                L"Erlang"},
     {L".xrl",                L"Erlang"},
-//    {L".rebar.lock",         L"Erlang"},
-//    {L".rebar.config.lock",  L"Erlang"},
-//    {L".rebar.config",       L"Erlang"},
+    {L".rebar.lock",         L"Erlang"},
+    {L".rebar.config.lock",  L"Erlang"},
+    {L".rebar.config",       L"Erlang"},
     {L".emakefile",          L"Erlang"},
-//    {L".app.src",            L"Erlang"},
+    {L".app.src",            L"Erlang"},
     {L".erl",                L"Erlang"},
     {L".exp",                L"Expect"},
     {L".4th",                L"Forth"},
@@ -932,7 +925,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".groovy",             L"Groovy"},
     {L".gant",               L"Groovy"},
     {L".gradle",             L"Gradle"},
-//    {L".gradle.kts",         L"Gradle"},
+    {L".gradle.kts",         L"Gradle"},
     {L".h",                  L"C/C++ Header"},
     {L".H",                  L"C/C++ Header"},
     {L".hh",                 L"C/C++ Header"},
@@ -952,7 +945,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".shader",             L"HLSL"},
     {L".cg",                 L"HLSL"},
     {L".cginc",              L"HLSL"},
-//    {L".haml.deface",        L"Haml"},
+    {L".haml.deface",        L"Haml"},
     {L".haml",               L"Haml"},
     {L".handlebars",         L"Handlebars"},
     {L".hbs",                L"Handlebars"},
@@ -962,7 +955,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".HC",                 L"HolyC"},
     {L".hoon",               L"Hoon"},
     {L".xht",                L"HTML"},
-//    {L".html.hl",            L"HTML"},
+    {L".html.hl",            L"HTML"},
     {L".htm",                L"HTML"},
     {L".html",               L"HTML"},
     {L".heex",               L"HTML EEx"},
@@ -977,7 +970,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".imba",               L"Imba"},
     {L".prefs",              L"INI"},
     {L".lektorproject",      L"INI"},
-//    {L".buildozer.spec",     L"INI"},
+    {L".buildozer.spec",     L"INI"},
     {L".ini",                L"INI"},
     {L".editorconfig",       L"INI"},
     {L".ism",                L"InstallShield"},
@@ -1023,16 +1016,16 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".webmanifest",        L"JSON"},
     {L".webapp",             L"JSON"},
     {L".topojson",           L"JSON"},
-//    {L".tfstate.backup",     L"JSON"},
+    {L".tfstate.backup",     L"JSON"},
     {L".tfstate",            L"JSON"},
-//    {L".mcmod.info",         L"JSON"},
+    {L".mcmod.info",         L"JSON"},
     {L".mcmeta",             L"JSON"},
     {L".json-tmlanguage",    L"JSON"},
     {L".jsonl",              L"JSON"},
     {L".har",                L"JSON"},
     {L".gltf",               L"JSON"},
     {L".geojson",            L"JSON"},
-//    {L".composer.lock",      L"JSON"},
+    {L".composer.lock",      L"JSON"},
     {L".avsc",               L"JSON"},
     {L".watchmanconfig",     L"JSON"},
     {L".tern-project",       L"JSON"},
@@ -1087,13 +1080,13 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".mdwn",               L"Markdown"},
     {L".mdown",              L"Markdown"},
     {L".markdown",           L"Markdown"},
-//    {L".contents.lr",        L"Markdown"},
+    {L".contents.lr",        L"Markdown"},
     {L".md",                 L"Markdown"},
     {L".mc",                 L"Windows Message File"},
     {L".met",                L"Teamcenter met"},
     {L".mg",                 L"Modula3"},
     {L".mojom",              L"Mojo"},
-//    {L".meson.build",        L"Meson"},
+    {L".meson.build",        L"Meson"},
     {L".metal",              L"Metal"},
     {L".mk",                 L"make"},
     {L".ml4",                L"OCaml"},
@@ -1129,7 +1122,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".nims",               L"Nim"},
     {L".nimrod",             L"Nim"},
     {L".nimble",             L"Nim"},
-//    {L".nim.cfg",            L"Nim"},
+    {L".nim.cfg",            L"Nim"},
     {L".nim",                L"Nim"},
     {L".nix",                L"Nix"},
     {L".nut",                L"Squirrel"},
@@ -1148,7 +1141,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".rexfile",            L"Perl"},
     {L".psgi",               L"Perl"},
     {L".ph",                 L"Perl"},
-//    {L".makefile.pl",        L"Perl"},
+    {L".makefile.pl",        L"Perl"},
     {L".cpanfile",           L"Perl"},
     {L".al",                 L"Perl"},
     {L".ack",                L"Perl"},
@@ -1160,7 +1153,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".phakefile",          L"PHP"},
     {L".ctp",                L"PHP"},
     {L".aw",                 L"PHP"},
-//    {L".php_cs.dist",        L"PHP"},
+    {L".php_cs.dist",        L"PHP"},
     {L".php_cs",             L"PHP"},
     {L".php3",               L"PHP"},
     {L".php4",               L"PHP"},
@@ -1178,7 +1171,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".pm6",                L"Raku"},
     {L".raku",               L"Raku"},
     {L".rakumod",            L"Raku"},
-//    {L".pom.xml",            L"Maven"},
+    {L".pom.xml",            L"Maven"},
     {L".pom",                L"Maven"},
     {L".scad",               L"OpenSCAD"},
     {L".yap",                L"Prolog"},
@@ -1208,7 +1201,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".lmi",                L"Python"},
     {L".gypi",               L"Python"},
     {L".gyp",                L"Python"},
-//    {L".build.bazel",        L"Python"},
+    {L".build.bazel",        L"Python"},
     {L".buck",               L"Python"},
     {L".gclient",            L"Python"},
     {L".py",                 L"Python"},
@@ -1239,7 +1232,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".guardfile",          L"Ruby"},
     {L".god",                L"Ruby"},
     {L".gemspec",            L"Ruby"},
-//    {L".gemfile.lock",       L"Ruby"},
+    {L".gemfile.lock",       L"Ruby"},
     {L".gemfile",            L"Ruby"},
     {L".fastfile",           L"Ruby"},
     {L".eye",                L"Ruby"},
@@ -1262,10 +1255,10 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".rhtml",              L"Ruby HTML"},
     {L".circom",             L"Circom"},
     {L".cairo",              L"Cairo"},
-//    {L".rs.in",              L"Rust"},
+    {L".rs.in",              L"Rust"},
     {L".rs",                 L"Rust"},
-//    {L".rst.txt",            L"reStructuredText"},
-//    {L".rest.txt",           L"reStructuredText"},
+    {L".rst.txt",            L"reStructuredText"},
+    {L".rest.txt",           L"reStructuredText"},
     {L".rest",               L"reStructuredText"},
     {L".rst",                L"reStructuredText"},
     {L".s",                  L"Assembly"},
@@ -1359,11 +1352,11 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".e",                  L"Specman e"},
     {L".sql",                L"SQL"},
     {L".SQL",                L"SQL"},
-//    {L".sproc.sql",          L"SQL Stored Procedure"},
-//    {L".spoc.sql",           L"SQL Stored Procedure"},
-//    {L".spc.sql",            L"SQL Stored Procedure"},
-//    {L".udf.sql",            L"SQL Stored Procedure"},
-//    {L".data.sql",           L"SQL Data"},
+    {L".sproc.sql",          L"SQL Stored Procedure"},
+    {L".spoc.sql",           L"SQL Stored Procedure"},
+    {L".spc.sql",            L"SQL Stored Procedure"},
+    {L".udf.sql",            L"SQL Stored Procedure"},
+    {L".data.sql",           L"SQL Data"},
     {L".sss",                L"SugarSS"},
     {L".st",                 L"Smalltalk"},
     {L".rules",              L"Snakemake"},
@@ -1483,9 +1476,9 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".xacro",              L"XML"},
     {L".x3d",                L"XML"},
     {L".wsf",                L"XML"},
-//    {L".web.release.config", L"XML"},
-//    {L".web.debug.config",   L"XML"},
-//    {L".web.config",         L"XML"},
+    {L".web.release.config", L"XML"},
+    {L".web.debug.config",   L"XML"},
+    {L".web.config",         L"XML"},
     {L".wxml",               L"WXML"},
     {L".wxss",               L"WXSS"},
     {L".vxml",               L"XML"},
@@ -1508,7 +1501,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".srdf",               L"XML"},
     {L".shproj",             L"XML"},
     {L".sfproj",             L"XML"},
-//    {L".settings.stylecop",  L"XML"},
+    {L".settings.stylecop",  L"XML"},
     {L".scxml",              L"XML"},
     {L".rss",                L"XML"},
     {L".resx",               L"XML"},
@@ -1520,11 +1513,11 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".proj",               L"XML"},
     {L".plist",              L"XML"},
     {L".pkgproj",            L"XML"},
-//    {L".packages.config",    L"XML"},
+    {L".packages.config",    L"XML"},
     {L".osm",                L"XML"},
     {L".odd",                L"XML"},
     {L".nuspec",             L"XML"},
-//    {L".nuget.config",       L"XML"},
+    {L".nuget.config",       L"XML"},
     {L".nproj",              L"XML"},
     {L".ndproj",             L"XML"},
     {L".natvis",             L"XML"},
@@ -1541,7 +1534,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".fsproj",             L"XML"},
     {L".filters",            L"XML"},
     {L".dotsettings",        L"XML"},
-//    {L".dll.config",         L"XML"},
+    {L".dll.config",         L"XML"},
     {L".ditaval",            L"XML"},
     {L".ditamap",            L"XML"},
     {L".depproj",            L"XML"},
@@ -1555,7 +1548,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".ccproj",             L"XML"},
     {L".builds",             L"XML"},
     {L".axml",               L"XML"},
-//    {L".app.config",         L"XML"},
+    {L".app.config",         L"XML"},
     {L".ant",                L"XML"},
     {L".admx",               L"XML"},
     {L".adml",               L"XML"},
@@ -1564,7 +1557,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".xml",                L"XML"},
     {L".XML",                L"XML"},
     {L".mxml",               L"MXML"},
-//    {L".xml.builder",        L"builder"},
+    {L".xml.builder",        L"builder"},
     {L".build",              L"NAnt script"},
     {L".vim",                L"vim script"},
     {L".swift",              L"Swift"},
@@ -1592,14 +1585,14 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
     {L".xtend",              L"Xtend"},
     {L".yacc",               L"yacc"},
     {L".y",                  L"yacc"},
-//    {L".yml.mysql",          L"YAML"},
+    {L".yml.mysql",          L"YAML"},
     {L".yaml-tmlanguage",    L"YAML"},
     {L".syntax",             L"YAML"},
     {L".sublime-syntax",     L"YAML"},
     {L".rviz",               L"YAML"},
     {L".reek",               L"YAML"},
     {L".mir",                L"YAML"},
-//    {L".glide.lock",         L"YAML"},
+    {L".glide.lock",         L"YAML"},
     {L".gemrc",              L"YAML"},
     {L".clang-tidy",         L"YAML"},
     {L".clang-format",       L"YAML"},
@@ -1618,7 +1611,7 @@ const REVISION_RECORD_EXTENSION_MAPPING ExtensionMappingTable[] = {
  * to speed up extension lookups.
  */
 const REVISION_RECORD_EXTENSION_MAPPING *RevExtensionHashTable[
-    REV_EXTENSION_HASH_BUCKET_COUNT
+    EXTENSION_HASH_BUCKET_COUNT
 ];
 
 BOOL RevExtensionHashTableInitialized = FALSE;
@@ -1638,8 +1631,8 @@ BOOL SupportAnsi;
 // ------------------------------------------------ Internal Function Prototypes
 //
 
-_Ret_maybenull_
-_Must_inspect_result_
+_Ret_notnull_
+static
 PWCHAR
 RevGetLastKnownWin32Error(
     VOID
@@ -1647,6 +1640,7 @@ RevGetLastKnownWin32Error(
 
 _Ret_maybenull_
 _Must_inspect_result_
+static
 PWCHAR
 RevStringAppend(
     _In_z_ PWCHAR String1,
@@ -1655,17 +1649,21 @@ RevStringAppend(
 
 _Ret_maybenull_
 _Must_inspect_result_
+static
 PWCHAR
 RevStringPrepend(
     _In_z_ PWCHAR String1,
     _In_z_ PWCHAR String2
     );
 
+static
+FORCEINLINE
 ULONG
 RevHashExtensionKey(
     _In_z_ PWCHAR Extension
     );
 
+static
 VOID
 RevInitializeExtensionHashTable(
     VOID
@@ -1999,9 +1997,9 @@ RevPrintEx(
  * @return A pointer to the error message string on success,
  * or NULL on failure.
  */
-_Ret_maybenull_
-_Must_inspect_result_
+_Ret_notnull_
 PWCHAR
+static
 RevGetLastKnownWin32Error(
     VOID
     )
@@ -2051,6 +2049,7 @@ RevGetLastKnownWin32Error(
  */
 _Ret_maybenull_
 _Must_inspect_result_
+static
 PWCHAR
 RevStringAppend(
     _In_z_ PWCHAR String1,
@@ -2116,6 +2115,7 @@ Exit:
  */
 _Ret_maybenull_
 _Must_inspect_result_
+static
 PWCHAR
 RevStringPrepend(
     _In_z_ PWCHAR String1,
@@ -2180,6 +2180,8 @@ Exit:
  *
  * @return A 32-bit hash value for the extension.
  */
+static
+FORCEINLINE
 ULONG
 RevHashExtensionKey(
     _In_z_ PWCHAR Extension
@@ -2212,6 +2214,7 @@ RevHashExtensionKey(
  * This function initializes the extension hash table from the
  * ExtensionMappingTable.
  */
+static
 VOID
 RevInitializeExtensionHashTable(
     VOID
@@ -2223,7 +2226,7 @@ RevInitializeExtensionHashTable(
         return;
     }
 
-    RtlZeroMemory((PVOID)RevExtensionHashTable, sizeof(RevExtensionHashTable));
+    ZeroMemory((PVOID)RevExtensionHashTable, sizeof(RevExtensionHashTable));
 
     for (i = 0; i < ARRAYSIZE(ExtensionMappingTable); i += 1) {
 
@@ -2231,11 +2234,11 @@ RevInitializeExtensionHashTable(
             &ExtensionMappingTable[i];
 
         ULONG hash = RevHashExtensionKey(entry->Extension);
-        ULONG bucket = hash & (REV_EXTENSION_HASH_BUCKET_COUNT - 1);
+        ULONG bucket = hash & (EXTENSION_HASH_BUCKET_COUNT - 1);
 
         ULONG probes = 0;
 
-        while (probes < REV_EXTENSION_HASH_BUCKET_COUNT) {
+        while (probes < EXTENSION_HASH_BUCKET_COUNT) {
 
             if (RevExtensionHashTable[bucket] == NULL) {
                 RevExtensionHashTable[bucket] = entry;
@@ -2250,7 +2253,7 @@ RevInitializeExtensionHashTable(
                 break;
             }
 
-            bucket = (bucket + 1) & (REV_EXTENSION_HASH_BUCKET_COUNT - 1);
+            bucket = (bucket + 1) & (EXTENSION_HASH_BUCKET_COUNT - 1);
 
             probes += 1;
         }
@@ -2498,6 +2501,7 @@ Exit:
  * @return TRUE (always).
  */
 _Must_inspect_result_
+static
 BOOL
 RevSynchronousBackendInitialize(
     _Inout_ PREVISION Revision
@@ -2514,6 +2518,7 @@ RevSynchronousBackendInitialize(
  * RevReviseFile() on the caller thread.
  */
 _Must_inspect_result_
+static
 BOOL
 RevSynchronousBackendSubmitFile(
     _Inout_ PREVISION Revision,
@@ -2541,6 +2546,7 @@ RevSynchronousBackendSubmitFile(
  * is provided for uniformity with other backends.
  */
 _Must_inspect_result_
+static
 BOOL
 RevSynchronousBackendDrainAndShutdown(
     _Inout_ PREVISION Revision
@@ -2557,7 +2563,7 @@ RevSynchronousBackendDrainAndShutdown(
 /**
  * Static vtable instance for the synchronous backend.
  */
-static const REV_FILE_BACKEND_VTBL RevSynchronousBackendVtable = {
+static const REVISION_FILE_BACKEND_VTABLE RevSynchronousBackendVtable = {
     RevSynchronousBackendInitialize,
     RevSynchronousBackendSubmitFile,
     RevSynchronousBackendDrainAndShutdown
@@ -2584,7 +2590,7 @@ RevThreadPoolWorkerThread(
     // Global revision pointer published during RevInitializeRevision().
     //
     PREVISION revision = RevisionState;
-    PREV_THREAD_POOL_BACKEND_CONTEXT context = Parameter;
+    PREVISION_THREAD_POOL_BACKEND_CONTEXT context = Parameter;
 
     if (context == NULL) {
         return 0;
@@ -2592,7 +2598,7 @@ RevThreadPoolWorkerThread(
 
     for (;;) {
 
-        PREV_THREAD_POOL_WORK_ITEM workItem = NULL;
+        PREVISION_THREAD_POOL_WORK_ITEM workItem = NULL;
 
         //
         // Pull the next work item from the queue, waiting if necessary.
@@ -2673,6 +2679,7 @@ RevThreadPoolWorkerThread(
  * @return TRUE if the backend was initialized successfully, FALSE otherwise.
  */
 _Must_inspect_result_
+static
 BOOL
 RevThreadPoolBackendInitialize(
     _Inout_ PREVISION Revision
@@ -2681,7 +2688,7 @@ RevThreadPoolBackendInitialize(
     SYSTEM_INFO systemInfo;
     ULONG desiredThreads;
     ULONG index;
-    PREV_THREAD_POOL_BACKEND_CONTEXT context = NULL;
+    PREVISION_THREAD_POOL_BACKEND_CONTEXT context = NULL;
 
     if (Revision == NULL) {
         return FALSE;
@@ -2704,8 +2711,8 @@ RevThreadPoolBackendInitialize(
     //
     // Allocate and zero the backend context.
     //
-    context = (PREV_THREAD_POOL_BACKEND_CONTEXT)malloc(
-        sizeof(REV_THREAD_POOL_BACKEND_CONTEXT));
+    context = (PREVISION_THREAD_POOL_BACKEND_CONTEXT)malloc(
+        sizeof(REVISION_THREAD_POOL_BACKEND_CONTEXT));
 
     if (context == NULL) {
         RevLogError("Failed to allocate thread pool backend context.");
@@ -2786,6 +2793,7 @@ RevThreadPoolBackendInitialize(
  * Submits a single file to the thread pool backend.
  */
 _Must_inspect_result_
+static
 BOOL
 RevThreadPoolBackendSubmitFile(
     _Inout_ PREVISION Revision,
@@ -2793,8 +2801,8 @@ RevThreadPoolBackendSubmitFile(
     _In_ const WIN32_FIND_DATAW *FindData
     )
 {
-    PREV_THREAD_POOL_BACKEND_CONTEXT context = NULL;
-    PREV_THREAD_POOL_WORK_ITEM workItem = NULL;
+    PREVISION_THREAD_POOL_BACKEND_CONTEXT context = NULL;
+    PREVISION_THREAD_POOL_WORK_ITEM workItem = NULL;
     SIZE_T pathLengthInChars = 0;
     PWCHAR pathCopy = NULL;
 
@@ -2802,7 +2810,7 @@ RevThreadPoolBackendSubmitFile(
         return FALSE;
     }
 
-    context = (PREV_THREAD_POOL_BACKEND_CONTEXT)Revision->BackendContext;
+    context = (PREVISION_THREAD_POOL_BACKEND_CONTEXT)Revision->BackendContext;
 
     if (context == NULL) {
         return FALSE;
@@ -2826,8 +2834,8 @@ RevThreadPoolBackendSubmitFile(
     //
     // Allocate and initialize the work item container.
     //
-    workItem = (PREV_THREAD_POOL_WORK_ITEM)malloc(
-        sizeof(REV_THREAD_POOL_WORK_ITEM));
+    workItem = (PREVISION_THREAD_POOL_WORK_ITEM)malloc(
+        sizeof(REVISION_THREAD_POOL_WORK_ITEM));
 
     if (workItem == NULL) {
         RevLogError("Failed to allocate thread pool work item.");
@@ -2893,19 +2901,20 @@ RevThreadPoolBackendSubmitFile(
  * @return TRUE if the backend was shut down cleanly, FALSE otherwise.
  */
 _Must_inspect_result_
+static
 BOOL
 RevThreadPoolBackendDrainAndShutdown(
     _Inout_ PREVISION Revision
     )
 {
-    PREV_THREAD_POOL_BACKEND_CONTEXT Context = NULL;
+    PREVISION_THREAD_POOL_BACKEND_CONTEXT Context = NULL;
     ULONG Index;
 
     if (Revision == NULL) {
         return FALSE;
     }
 
-    Context = (PREV_THREAD_POOL_BACKEND_CONTEXT)Revision->BackendContext;
+    Context = (PREVISION_THREAD_POOL_BACKEND_CONTEXT)Revision->BackendContext;
 
     if (Context == NULL) {
         //
@@ -2973,7 +2982,7 @@ RevThreadPoolBackendDrainAndShutdown(
 
     while (Context->WorkHead != NULL) {
 
-        PREV_THREAD_POOL_WORK_ITEM Item = Context->WorkHead;
+        PREVISION_THREAD_POOL_WORK_ITEM Item = Context->WorkHead;
 
         //
         // Advance the head pointer before touching the current item to
@@ -3024,7 +3033,7 @@ RevThreadPoolBackendDrainAndShutdown(
 /**
  * Static vtable instance for the thread pool backend.
  */
-static const REV_FILE_BACKEND_VTBL RevThreadPoolBackendVtable = {
+static const REVISION_FILE_BACKEND_VTABLE RevThreadPoolBackendVtable = {
     RevThreadPoolBackendInitialize,
     RevThreadPoolBackendSubmitFile,
     RevThreadPoolBackendDrainAndShutdown
@@ -3073,6 +3082,17 @@ RevInitializeFileBackend(
     case RevFileBackendThreadPool:
         Revision->BackendVtable = &RevThreadPoolBackendVtable;
         result = Revision->BackendVtable->Initialize(Revision);
+        //
+        // Fall back from thread pool to synchronous when thread pool
+        // initialization fails.
+        //
+        if (!result) {
+            RevLogWarning("Thread pool backend failed to initialize, "
+                          "falling back to synchronous backend.");
+            Revision->BackendVtable = &RevSynchronousBackendVtable;
+            result = Revision->BackendVtable->Initialize(Revision);
+            effective = RevFileBackendSynchronous;
+        }
         break;
 
     // case RevFileBackendIocp:
@@ -3565,10 +3585,10 @@ RevMapExtensionToLanguage(
     RevInitializeExtensionHashTable();
 
     hash = RevHashExtensionKey(Extension);
-    bucket = hash & (REV_EXTENSION_HASH_BUCKET_COUNT - 1);
+    bucket = hash & (EXTENSION_HASH_BUCKET_COUNT - 1);
     probes = 0;
 
-    while (probes < REV_EXTENSION_HASH_BUCKET_COUNT) {
+    while (probes < EXTENSION_HASH_BUCKET_COUNT) {
 
         const REVISION_RECORD_EXTENSION_MAPPING *entry =
             RevExtensionHashTable[bucket];
@@ -3581,7 +3601,7 @@ RevMapExtensionToLanguage(
             return entry->LanguageOrFileType;
         }
 
-        bucket = (bucket + 1) & (REV_EXTENSION_HASH_BUCKET_COUNT - 1);
+        bucket = (bucket + 1) & (EXTENSION_HASH_BUCKET_COUNT - 1);
         probes += 1;
     }
 
@@ -3693,7 +3713,7 @@ RevGetLanguageFamily(
     LONG index;
 
     if (LanguageOrFileType == NULL) {
-        return RevLanguageFamilyCStyle;
+        return LanguageFamilyCStyle;
     }
 
     for (index = 0; index < ARRAYSIZE(LanguageFamilyMappingTable); index += 1) {
@@ -3706,7 +3726,7 @@ RevGetLanguageFamily(
     //
     // Default for everything that is not explicitly configured.
     //
-    return RevLanguageFamilyCStyle;
+    return LanguageFamilyCStyle;
 }
 
 /**
@@ -4051,7 +4071,7 @@ RevShouldReviseFile(
     )
 {
     BOOL status = FALSE;
-    WCHAR extensionBuffer[REV_MAX_EXTENSION_CCH];
+    WCHAR extensionBuffer[MAX_EXTENSION_CCH];
 
     if (FileName == NULL) {
         RevLogError("FileName is NULL.");
@@ -4711,7 +4731,7 @@ RevCountLinesWithFamily(
 {
     switch (LanguageFamily) {
 
-    case RevLanguageFamilyHashStyle:
+    case LanguageFamilyHashStyle:
         //
         // Languages with "#" line comments.
         //
@@ -4722,7 +4742,7 @@ RevCountLinesWithFamily(
                                       FileLineStats);
         break;
 
-    case RevLanguageFamilyDoubleDash:
+    case LanguageFamilyDoubleDash:
         //
         // Languages with "--" line comments.
         //
@@ -4733,7 +4753,7 @@ RevCountLinesWithFamily(
                                       FileLineStats);
         break;
 
-    case RevLanguageFamilySemicolon:
+    case LanguageFamilySemicolon:
         //
         // Languages with ";" line comments.
         //
@@ -4744,7 +4764,7 @@ RevCountLinesWithFamily(
                                       FileLineStats);
         break;
 
-    case RevLanguageFamilyPercent:
+    case LanguageFamilyPercent:
         //
         // Languages with "%" line comments.
         //
@@ -4755,7 +4775,7 @@ RevCountLinesWithFamily(
                                       FileLineStats);
         break;
 
-    case RevLanguageFamilyXmlStyle:
+    case LanguageFamilyXmlStyle:
         //
         // Languages with XML-style block comments: <!-- ... -->
         //
@@ -4764,7 +4784,7 @@ RevCountLinesWithFamily(
                               FileLineStats);
         break;
 
-    case RevLanguageFamilyNoComments:
+    case LanguageFamilyNoComments:
         //
         // Languages that should not treat any characters as comments.
         // We reuse the generic line-comment scanner with a NUL prefix,
@@ -4777,8 +4797,8 @@ RevCountLinesWithFamily(
                                       FileLineStats);
         break;
 
-    case RevLanguageFamilyCStyle:
-    case RevLanguageFamilyUnknown:
+    case LanguageFamilyCStyle:
+    case LanguageFamilyUnknown:
     default:
         //
         // Languages with // and /* ... */ comments.
@@ -4811,10 +4831,10 @@ RevReviseFile(
     BOOL status = TRUE;
     PREVISION_RECORD revisionRecord = NULL;
     PWCHAR languageOrFileType = NULL;
-    COMMENT_STYLE_FAMILY languageFamily = RevLanguageFamilyUnknown;
+    COMMENT_STYLE_FAMILY languageFamily = LanguageFamilyUnknown;
     FILE_LINE_STATS fileLineStats = {0};
     FILE_BUFFER_VIEW view;
-    WCHAR extensionBuffer[REV_MAX_EXTENSION_CCH];
+    WCHAR extensionBuffer[MAX_EXTENSION_CCH];
 
     ZeroMemory(&view, sizeof(view));
 
@@ -4963,10 +4983,10 @@ RevOutputRevisionStatistics(
 
     while (entry != &RevisionState->RevisionRecordListHead) {
 
-        ULONGLONG total;
-        ULONGLONG blank;
-        ULONGLONG comment;
-        ULONGLONG code;
+        ULONGLONG total = 0;
+        ULONGLONG blank = 0;
+        ULONGLONG comment = 0;
+        ULONGLONG code = 0;
 
         revisionRecord = CONTAINING_RECORD(entry,
                                            REVISION_RECORD,
@@ -5001,10 +5021,10 @@ RevOutputRevisionStatistics(
              "---------------------------------------------\n");
 
     {
-        ULONGLONG total;
-        ULONGLONG blank;
-        ULONGLONG comment;
-        ULONGLONG code;
+        ULONGLONG total = 0;
+        ULONGLONG blank = 0;
+        ULONGLONG comment = 0;
+        ULONGLONG code = 0;
 
         total = RevisionState->CountOfLinesTotal;
         blank = RevisionState->CountOfLinesBlank;
@@ -5063,14 +5083,14 @@ RevParseBackendKind(
 
         *BackendKind = RevFileBackendSynchronous;
 
-               } else if (wcscmp(Value, L"threadpool") == 0) {
+    } else if (wcscmp(Value, L"threadpool") == 0) {
 
-                   *BackendKind = RevFileBackendThreadPool;
+        *BackendKind = RevFileBackendThreadPool;
 
-               } else {
+    } else {
 
-                   return FALSE;
-               }
+        return FALSE;
+    }
 
     return TRUE;
 }
@@ -5089,7 +5109,6 @@ wmain(
     LARGE_INTEGER endQpc = {0};
     LARGE_INTEGER frequency = {0};
     REVISION_CONFIG revisionConfig = {0};
-    LONG index = 0;
 
     SupportAnsi = SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE),
                                  ENABLE_PROCESSED_OUTPUT |
@@ -5101,16 +5120,16 @@ wmain(
 
     RevPrint(WelcomeString);
 
-    /*
-     * Process the command line arguments if any.
-     */
+     //
+     // Process the command line arguments, if any.
+     //
 
      if (argc <= 1) {
-         /*
-          * The command line arguments were not passed at all, so a folder
-          * selection dialog should be opened where the user can select a
-          * directory to perform the revision.
-          */
+         //
+         // The command line arguments were not passed at all, so a folder
+         // selection dialog should be opened where the user can select a
+         // directory to perform the revision.
+         //
          RevPrint(UsageString);
          goto Exit;
     }
@@ -5118,10 +5137,10 @@ wmain(
     if (wcscmp(argv[1], L"-help") == 0 ||
         wcscmp(argv[1], L"-h") == 0 ||
         wcscmp(argv[1], L"-?") == 0) {
-        /*
-         * The only command line argument passed was '-help', '-h', or '-?',
-         * so show the instruction for use.
-         */
+        //
+        // The only command line argument passed was '-help', '-h', or '-?',
+        // so show the instruction for use.
+        //
         RevPrint(UsageString);
         goto Exit;
     }
@@ -5142,6 +5161,9 @@ wmain(
     }
 
     if (argc > 2) {
+
+        LONG index = 0;
+
         //
         // It is expected that in the case of multiple command line arguments:
         //  1) The first argument is the path to the root revision directory.
@@ -5216,7 +5238,7 @@ wmain(
                 }
 
                 threadsValue = argv[index + 1]; {
-                    wchar_t *EndPointer = NULL;
+                    PWCHAR EndPointer = NULL;
                     unsigned long threads = wcstoul(threadsValue,
                                                     &EndPointer,
                                                     10);
@@ -5264,9 +5286,9 @@ wmain(
     }
 #endif
 
-    /*
-     * Initialize the revision engine.
-     */
+    //
+    // Initialize the revision engine.
+    //
     status = RevInitializeRevision(&revisionConfig);
     if (status == FALSE) {
         RevLogError("Failed to initialize the revision engine.");
