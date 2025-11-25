@@ -111,7 +111,7 @@ typedef struct REVISION_CONFIG {
     /**
      * Desired worker thread count for backends that support it
      * (e.g., thread pool). If zero, a default based on the number
-     * of processors x 2 is used.
+     * of processors is used.
      */
     ULONG WorkerThreadCount;
 } REVISION_CONFIG, *PREVISION_CONFIG;
@@ -344,6 +344,10 @@ typedef struct REVISION_THREAD_POOL_BACKEND_CONTEXT {
 
     /**
      * Protects the work queue and related state.
+     *
+     * @remark The backend's work queue is single-queue/single-lock;
+     * for high producer rate plus many cores, the CS could become contended,
+     * but realistically, IO latency dominates, so it's probably okay.
      */
     CRITICAL_SECTION QueueLock;
 
@@ -2957,11 +2961,11 @@ RevThreadPoolBackendInitialize(
 
     //
     // Decide how many worker threads to use. If no override was specified
-    // in the revision config, fall back to the number of processors x 2.
+    // in the revision config, fall back to the number of processors.
     //
     GetSystemInfo(&systemInfo);
 
-    desiredThreads = Revision->Config.WorkerThreadCount * 2;
+    desiredThreads = Revision->Config.WorkerThreadCount;
     if (desiredThreads == 0) {
         desiredThreads = systemInfo.dwNumberOfProcessors;
         if (desiredThreads == 0) {
@@ -4128,8 +4132,10 @@ RevEnumerateDirectoryWithVisitor(
         //
         // Skip the current directory (".") and parent directory ("..").
         //
-        if (wcscmp(findFileData.cFileName, L".") == 0 ||
-            wcscmp(findFileData.cFileName, L"..") == 0) {
+#define ONE_DOT L"."
+#define TWO_DOTS L".."
+        if (wcscmp(findFileData.cFileName, ONE_DOT) == 0 ||
+            wcscmp(findFileData.cFileName, TWO_DOTS) == 0) {
 
             continue;
         }
