@@ -10,13 +10,8 @@ Abstract:
 
     This module implements CodeMeter, a program for counting lines of code.
 
-    Throughout the code, the term revision refers to the entire process, which
-    includes scanning files, counting the number of files, and calculating the
-    total lines of code.
-
-                     path ┌─────────────────┐ returns
-    Init params ─────────►│    Revision     ├─────────► Statistics
-                          └─────────────────┘
+    CodeMeter is structured as an engine around a global revision object
+    that owns configuration, statistics and the chosen file backend.
 
 --*/
 
@@ -116,7 +111,7 @@ typedef struct REVISION_CONFIG {
     /**
      * Desired worker thread count for backends that support it
      * (e.g., thread pool). If zero, a default based on the number
-     * of processors is used.
+     * of processors x 2 is used.
      */
     ULONG WorkerThreadCount;
 } REVISION_CONFIG, *PREVISION_CONFIG;
@@ -2962,11 +2957,11 @@ RevThreadPoolBackendInitialize(
 
     //
     // Decide how many worker threads to use. If no override was specified
-    // in the revision config, fall back to the number of logical processors.
+    // in the revision config, fall back to the number of processors x 2.
     //
     GetSystemInfo(&systemInfo);
 
-    desiredThreads = Revision->Config.WorkerThreadCount;
+    desiredThreads = Revision->Config.WorkerThreadCount * 2;
     if (desiredThreads == 0) {
         desiredThreads = systemInfo.dwNumberOfProcessors;
         if (desiredThreads == 0) {
@@ -3487,8 +3482,8 @@ RevStartRevision(
 {
     BOOL status = TRUE;
     PREVISION revision = RevisionState;
-    DWORD attributes;
-    PWCHAR rootPath;
+    DWORD attributes = 0;
+    PWCHAR rootPath = NULL;
 
     if (revision == NULL) {
         RevLogError("RevStartRevision called before RevInitializeRevision.");
@@ -3902,9 +3897,9 @@ RevFindRevisionRecordForLanguageByExtension(
     _In_z_ PWCHAR Extension
     )
 {
-    PLIST_ENTRY entry;
-    PWCHAR languageOrFileType;
-    PREVISION_RECORD revisionRecord;
+    PLIST_ENTRY entry = NULL;
+    PWCHAR languageOrFileType = NULL;
+    PREVISION_RECORD revisionRecord = NULL;
 
     if (Extension == NULL) {
         RevLogError("Extension is NULL.");
@@ -3975,7 +3970,7 @@ RevGetLanguageFamily(
     _In_z_ PWCHAR LanguageOrFileType
     )
 {
-    LONG index;
+    LONG index = 0;
 
     if (LanguageOrFileType == NULL) {
         return LanguageFamilyCStyle;
@@ -4080,7 +4075,7 @@ RevEnumerateDirectoryWithVisitor(
         //
         // "*" or "\\*"
         //
-        SIZE_T extraChars;
+        SIZE_T extraChars = 0;
         if (hasTrailingSeparator) {
             extraChars = 1;
         } else {
@@ -5408,7 +5403,7 @@ RevParseBackendKind(
         *BackendKind = FileBackendSynchronous;
 
     } else if (wcscmp(Value, L"threadpool") == 0 ||
-               wcscmp(Value, L"tp")) {
+               wcscmp(Value, L"tp") == 0 ) {
 
         *BackendKind = FileBackendThreadPool;
 
