@@ -538,7 +538,7 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
 // ------------------------------------------------------- Constants and Globals
 //
 
-#define EXTENSION_HASH_BUCKET_COUNT 1024u
+#define EXTENSION_HASH_BUCKET_COUNT 2048u
 
 /**
  * Maximum length (in characters) of an extension key we support.
