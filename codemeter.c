@@ -25,6 +25,7 @@ Abstract:
 //
 
 #include <assert.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -430,8 +431,8 @@ typedef struct FILE_BUFFER_VIEW {
 
     /**
      * TRUE if the content appears to be text in a supported encoding
-     * (ANSI/UTF-8), FALSE if it appears to be binary or in an
-     * unsupported encoding (e.g., UTF-16).
+     * (ANSI/UTF-8, or UTF-16 that has been successfully converted to UTF-8),
+     * FALSE if it appears to be binary or in an unsupported encoding.
      */
     BOOL IsText;
 } FILE_BUFFER_VIEW, *PFILE_BUFFER_VIEW;
@@ -1670,6 +1671,16 @@ RevInitializeExtensionHashTable(
     );
 
 _Must_inspect_result_
+static
+BOOL
+RevConvertUtf16FileBufferToUtf8(
+    _Inout_ PFILE_BUFFER_VIEW View,
+    _In_ DWORD BytesRead,
+    _In_ BOOL IsBigEndian,
+    _In_z_ PWCHAR FilePath
+    );
+
+_Must_inspect_result_
 BOOL
 RevReadFileIntoBufferView(
     _In_z_ PWCHAR FilePath,
@@ -2263,6 +2274,220 @@ RevInitializeExtensionHashTable(
 }
 
 /**
+ * \brief This function converts a UTF-16 file buffer to UTF-8
+ *        in-place on a FILE_BUFFER_VIEW.
+ *
+ * For structurally invalid or unsupported UTF-16 content (for example, an odd
+ * number of remaining bytes after the BOM or a file that is too large to pass
+ * safely to WideCharToMultiByte), the function does not treat this as a hard
+ * failure. Instead, it:
+ *   - Leaves the revision in a consistent state,
+ *   - Sets View->IsText to FALSE,
+ *   - Clears ContentOffset and ContentLength, and
+ *   - Returns TRUE to indicate that the caller may continue, but should skip
+ *     line counting for this file.
+ *
+ * \param View
+ *      Pointer to the FILE_BUFFER_VIEW describing the current file buffer.
+ *
+ * \param BytesRead
+ *      Total number of bytes read from the file into View->Buffer, including
+ *      the UTF-16 BOM. This is used to determine the length of the UTF-16
+ *      payload to convert.
+ *
+ * \param IsBigEndian
+ *      TRUE if the UTF-16 BOM indicates big-endian encoding (0xFE 0xFF),
+ *      FALSE if it indicates little-endian encoding (0xFF 0xFE).
+ *
+ * \param FilePath
+ *      Path to the file being processed.
+ *
+ * \return
+ *      TRUE if the operation completed successfully. FALSE otherwise.
+ */
+_Must_inspect_result_
+static
+BOOL
+RevConvertUtf16FileBufferToUtf8(
+    _Inout_ PFILE_BUFFER_VIEW View,
+    _In_ DWORD BytesRead,
+    _In_ BOOL IsBigEndian,
+    _In_z_ PWCHAR FilePath
+    )
+{
+    const SIZE_T bomSize = 2;
+    SIZE_T utf16ByteLength;
+    SIZE_T wcharCount;
+    const UCHAR *rawBytes = NULL;
+    const WCHAR *inputWide = NULL;
+    WCHAR *allocatedWide = NULL;
+    int requiredUtf8Bytes = 0;
+    CHAR *utf8Buffer = NULL;
+    SIZE_T index;
+
+    if (View == NULL || View->Buffer == NULL) {
+        RevLogError("RevConvertUtf16FileBufferToUtf8 received "
+                    "invalid parameters.");
+        return FALSE;
+    }
+
+    if (BytesRead <= bomSize) {
+
+        //
+        // File consists only of a BOM; treat as empty text file.
+        //
+        View->ContentOffset = 0;
+        View->ContentLength = 0;
+        View->DataLength = 0;
+        View->IsText = TRUE;
+
+        return TRUE;
+    }
+
+    utf16ByteLength = BytesRead - (DWORD)bomSize;
+
+    //
+    // The remaining UTF-16 payload must be an even number of bytes.
+    //
+    if ((utf16ByteLength % sizeof(WCHAR)) != 0) {
+        RevLogWarning("File \"%ls\" appears to be UTF-16 encoded but "
+                      "has an unexpected byte length; "
+                      "skipping line counting for this file.",
+                      FilePath);
+
+        View->ContentOffset = 0;
+        View->ContentLength = 0;
+        View->IsText = FALSE;
+
+        return TRUE;
+    }
+
+    wcharCount = utf16ByteLength / sizeof(WCHAR);
+
+    //
+    // WideCharToMultiByte takes an int for the input length; guard against
+    // extremely large files that would overflow.
+    //
+    if (wcharCount > (SIZE_T)INT_MAX) {
+        RevLogWarning("File \"%ls\" is too large to convert from UTF-16 to "
+                      "UTF-8 safely; skipping line counting for this file.",
+                      FilePath);
+        View->ContentOffset = 0;
+        View->ContentLength = 0;
+        View->IsText = FALSE;
+        return TRUE;
+    }
+
+    rawBytes = (const UCHAR *)View->Buffer;
+
+    if (!IsBigEndian) {
+        //
+        // Little-endian UTF-16 can be reinterpreted directly as WCHAR.
+        //
+        inputWide = (const WCHAR *)(rawBytes + bomSize);
+
+    } else {
+        //
+        // For big-endian UTF-16, normalize to little-endian
+        // before calling WideCharToMultiByte.
+        //
+        allocatedWide = (PWCHAR)malloc(wcharCount * sizeof(WCHAR));
+
+        if (allocatedWide == NULL) {
+            RevLogError(
+                "Failed to allocate %Iu bytes for UTF-16 to UTF-8 conversion.",
+                wcharCount * sizeof(WCHAR));
+            return FALSE;
+        }
+
+        for (index = 0; index < wcharCount; index += 1) {
+
+            UCHAR high = rawBytes[bomSize + (index * 2)];
+            UCHAR low  = rawBytes[bomSize + (index * 2) + 1];
+
+            allocatedWide[index] = (WCHAR) ((USHORT)high << 8 | (USHORT)low);
+        }
+
+        inputWide = allocatedWide;
+    }
+
+    requiredUtf8Bytes = WideCharToMultiByte(CP_UTF8,
+                                            0,
+                                            inputWide,
+                                            (int)wcharCount,
+                                            NULL,
+                                            0,
+                                            NULL,
+                                            NULL);
+
+    if (requiredUtf8Bytes <= 0) {
+        RevLogError("Failed to compute UTF-8 buffer size while converting "
+                    "\"%ls\" from UTF-16.",
+                    FilePath);
+
+        if (allocatedWide != NULL) {
+            free(allocatedWide);
+        }
+
+        return FALSE;
+    }
+
+    utf8Buffer = (PCHAR)malloc((SIZE_T)requiredUtf8Bytes);
+
+    if (utf8Buffer == NULL) {
+        RevLogError("Failed to allocate %d bytes for UTF-8 buffer while "
+                    "converting \"%ls\".",
+                    requiredUtf8Bytes,
+                    FilePath);
+
+        if (allocatedWide != NULL) {
+            free(allocatedWide);
+        }
+
+        return FALSE;
+    }
+
+    if (WideCharToMultiByte(CP_UTF8,
+                            0,
+                            inputWide,
+                            (int)wcharCount,
+                            utf8Buffer,
+                            requiredUtf8Bytes,
+                            NULL,
+                            NULL) != requiredUtf8Bytes) {
+
+        RevLogError("Failed to convert \"%ls\" from UTF-16 to UTF-8.",
+                    FilePath);
+
+        free(utf8Buffer);
+
+        if (allocatedWide != NULL) {
+            free(allocatedWide);
+        }
+
+        return FALSE;
+    }
+
+    if (allocatedWide != NULL) {
+        free(allocatedWide);
+    }
+
+    //
+    // Replace the original buffer with the newly converted UTF-8 buffer.
+    //
+    free(View->Buffer);
+
+    View->Buffer = utf8Buffer;
+    View->BufferSize = (DWORD)requiredUtf8Bytes;
+    View->DataLength = (DWORD)requiredUtf8Bytes;
+    View->ContentOffset = 0;
+    View->ContentLength = (DWORD)requiredUtf8Bytes;
+    View->IsText = TRUE;
+
+    return TRUE;
+}
+
+/**
  * @brief Read the entire file into memory and construct a buffer view
  *        suitable for line counting.
  *
@@ -2414,24 +2639,52 @@ RevReadFileIntoBufferView(
             if ((b0 == 0xFF && b1 == 0xFE) ||
                 (b0 == 0xFE && b1 == 0xFF)) {
 
-                //
-                // UTF-16 BOM: currently unsupported for parsing; we do not
-                // attempt to convert to UTF-8 here.
-                //
-                RevLogWarning("File \"%ls\" appears to be UTF-16 encoded; "
-                              "skipping line counting for this file.",
-                              FilePath);
+                BOOL isBigEndian = (b0 == 0xFE && b1 == 0xFF);
 
-                View->IsText = FALSE;
-                View->ContentOffset = 0;
-                View->ContentLength = 0;
-                goto Exit;
+                //
+                // UTF-16 BOM detected. Convert the entire file contents to
+                // UTF-8 so that downstream line counting logic can treat it
+                // uniformly with other text encodings.
+                //
+                if (!RevConvertUtf16FileBufferToUtf8(View,
+                                                     bytesRead,
+                                                     isBigEndian,
+                                                     FilePath)) {
+
+                    //
+                    // Conversion failed.
+                    // Propagate as a fatal error for this file.
+                    //
+                    status = FALSE;
+                    goto Exit;
+                }
+
+                //
+                // The helper may decide that the file should be skipped
+                // (e.g. structurally invalid UTF-16). In that case, it
+                // leaves View->IsText set to FALSE, and we simply return
+                // success without counting.
+                //
+                if (!View->IsText) {
+                    goto Exit;
+                }
+
+                //
+                // After successful conversion, refresh our view of the
+                // buffer and length for subsequent processing.
+                //
+                bytesRead = View->DataLength;
+                offset = View->ContentOffset;
             }
         }
 
         View->ContentOffset = offset;
-        View->ContentLength =
-            (bytesRead > offset) ? (bytesRead - offset) : 0;
+
+        if (bytesRead > offset) {
+            View->ContentLength = bytesRead - offset;
+        } else {
+            View->ContentLength = 0;
+        }
     }
 
     //
