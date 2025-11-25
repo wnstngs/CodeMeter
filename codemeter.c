@@ -3546,9 +3546,8 @@ RevStartRevision(
 
         if (!RevShouldReviseFile(findData.cFileName)) {
 
-            EnterCriticalSection(&revision->StatsLock);
-            revision->CountOfIgnoredFiles += 1;
-            LeaveCriticalSection(&revision->StatsLock);
+            InterlockedIncrement(
+                (volatile LONG *)&revision->CountOfIgnoredFiles);
 
         } else {
 
@@ -4289,9 +4288,7 @@ RevRevisionFileVisitor(
 
     if (!RevShouldReviseFile(FindData->cFileName)) {
 
-        EnterCriticalSection(&revision->StatsLock);
-        revision->CountOfIgnoredFiles += 1;
-        LeaveCriticalSection(&revision->StatsLock);
+        InterlockedIncrement((volatile LONG *)&revision->CountOfIgnoredFiles);
 
         return TRUE;
     }
