@@ -237,10 +237,7 @@ typedef struct REVISION {
     PVOID BackendContext;
 
     /**
-     * Protects global counters and the revision record list.
-     *
-     * All updates to Revision->CountOf* fields and all accesses to the
-     * RevisionRecordListHead must hold this lock.
+     * Protects the revision record list and creation of new revision records.
      */
     CRITICAL_SECTION StatsLock;
 } REVISION, *PREVISION;
@@ -1835,6 +1832,22 @@ RevReviseFile(
     _In_z_ PWCHAR FilePath
     );
 
+static
+FORCEINLINE
+VOID
+RevAccumulateRevisionRecordStats(
+    _Inout_ PREVISION_RECORD RevisionRecord,
+    _In_ const FILE_LINE_STATS *FileLineStats
+    );
+
+static
+FORCEINLINE
+VOID
+RevAccumulateGlobalRevisionStats(
+    _Inout_ PREVISION Revision,
+    _In_ const FILE_LINE_STATS *FileLineStats
+    );
+
 VOID
 RevOutputRevisionStatistics(
     VOID
@@ -2274,7 +2287,7 @@ RevInitializeExtensionHashTable(
 }
 
 /**
- * \brief This function converts a UTF-16 file buffer to UTF-8
+ * @brief This function converts a UTF-16 file buffer to UTF-8
  *        in-place on a FILE_BUFFER_VIEW.
  *
  * For structurally invalid or unsupported UTF-16 content (for example, an odd
@@ -2287,22 +2300,22 @@ RevInitializeExtensionHashTable(
  *   - Returns TRUE to indicate that the caller may continue, but should skip
  *     line counting for this file.
  *
- * \param View
+ * @param View
  *      Pointer to the FILE_BUFFER_VIEW describing the current file buffer.
  *
- * \param BytesRead
+ * @param BytesRead
  *      Total number of bytes read from the file into View->Buffer, including
  *      the UTF-16 BOM. This is used to determine the length of the UTF-16
  *      payload to convert.
  *
- * \param IsBigEndian
+ * @param IsBigEndian
  *      TRUE if the UTF-16 BOM indicates big-endian encoding (0xFE 0xFF),
  *      FALSE if it indicates little-endian encoding (0xFF 0xFE).
  *
- * \param FilePath
+ * @param FilePath
  *      Path to the file being processed.
  *
- * \return
+ * @return
  *      TRUE if the operation completed successfully. FALSE otherwise.
  */
 _Must_inspect_result_
@@ -5149,11 +5162,11 @@ UpdateStats:
         goto Exit;
     }
 
+    //
+    // Resolve or create the revision record for this extension under the lock.
+    //
     EnterCriticalSection(&RevisionState->StatsLock);
 
-    //
-    // Find or create a revision record for the given extension/language.
-    //
     revisionRecord =
         RevFindRevisionRecordForLanguageByExtension(extensionBuffer);
 
@@ -5173,23 +5186,13 @@ UpdateStats:
         }
     }
 
-    //
-    // Update per-language statistics.
-    //
-    revisionRecord->CountOfFiles += 1;
-    revisionRecord->CountOfLinesTotal += fileLineStats.CountOfLinesTotal;
-    revisionRecord->CountOfLinesBlank += fileLineStats.CountOfLinesBlank;
-    revisionRecord->CountOfLinesComment += fileLineStats.CountOfLinesComment;
-
-    //
-    // Update global statistics.
-    //
-    RevisionState->CountOfFiles += 1;
-    RevisionState->CountOfLinesTotal += fileLineStats.CountOfLinesTotal;
-    RevisionState->CountOfLinesBlank += fileLineStats.CountOfLinesBlank;
-    RevisionState->CountOfLinesComment += fileLineStats.CountOfLinesComment;
-
     LeaveCriticalSection(&RevisionState->StatsLock);
+
+    //
+    // Atomically accumulate per-record and global statistics.
+    //
+    RevAccumulateRevisionRecordStats(revisionRecord, &fileLineStats);
+    RevAccumulateGlobalRevisionStats(RevisionState, &fileLineStats);
 
 Exit:
 
@@ -5198,6 +5201,77 @@ Exit:
     }
 
     return status;
+}
+
+/**
+ * Atomically accumulates per-file statistics into a revision record.
+ *
+ * @param RevisionRecord
+ *      Supplies the revision record whose counters should be updated.
+ *
+ * @param FileLineStats
+ *      Supplies the per-file statistics to be accumulated into the record.
+ *
+ * @remark If either parameter is NULL, the function performs no work.
+ */
+static
+FORCEINLINE
+VOID
+RevAccumulateRevisionRecordStats(
+    _Inout_ PREVISION_RECORD RevisionRecord,
+    _In_ const FILE_LINE_STATS *FileLineStats
+    )
+{
+    if (RevisionRecord == NULL || FileLineStats == NULL) {
+        return;
+    }
+
+    InterlockedIncrement((volatile LONG *)&RevisionRecord->CountOfFiles);
+
+    InterlockedAdd64((volatile LONG64 *)&RevisionRecord->CountOfLinesTotal,
+                     (LONG64)FileLineStats->CountOfLinesTotal);
+
+    InterlockedAdd64((volatile LONG64 *)&RevisionRecord->CountOfLinesBlank,
+                     (LONG64)FileLineStats->CountOfLinesBlank);
+
+    InterlockedAdd64((volatile LONG64 *)&RevisionRecord->CountOfLinesComment,
+                     (LONG64)FileLineStats->CountOfLinesComment);
+}
+
+/**
+ * Atomically accumulates per-file statistics into global revision totals.
+ *
+ * @param Revision
+ *      Supplies the revision instance whose global counters should be updated.
+ *
+ * @param FileLineStats
+ *      Supplies the per-file statistics to be accumulated into the global
+ *      totals.
+ *
+ * @remark If either parameter is NULL, the function performs no work.
+ */
+static
+FORCEINLINE
+VOID
+RevAccumulateGlobalRevisionStats(
+    _Inout_ PREVISION Revision,
+    _In_ const FILE_LINE_STATS *FileLineStats
+    )
+{
+    if (Revision == NULL || FileLineStats == NULL) {
+        return;
+    }
+
+    InterlockedIncrement((volatile LONG *)&Revision->CountOfFiles);
+
+    InterlockedAdd64((volatile LONG64 *)&Revision->CountOfLinesTotal,
+                     (LONG64)FileLineStats->CountOfLinesTotal);
+
+    InterlockedAdd64((volatile LONG64 *)&Revision->CountOfLinesBlank,
+                     (LONG64)FileLineStats->CountOfLinesBlank);
+
+    InterlockedAdd64((volatile LONG64 *)&Revision->CountOfLinesComment,
+                     (LONG64)FileLineStats->CountOfLinesComment);
 }
 
 /**
