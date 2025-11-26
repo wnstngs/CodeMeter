@@ -92,9 +92,15 @@ typedef struct REVISION_CONFIG {
     _Field_z_ PWCHAR RootDirectory;
 
     /**
-     * Indicates whether verbose revision mode is active.
+     * Indicates whether the verbose revision mode is active.
      */
     BOOL IsVerboseMode;
+
+    /**
+     * Indicates whether the revision output is in JSON format.
+     * Enabled for tests.
+     */
+    BOOL OutputJson;
 
     /**
      * Enumeration options that control how directory traversal is performed.
@@ -571,6 +577,8 @@ const WCHAR UsageString[] =
     "\t    Print a help message and exit.\n\n"
     "\t-v\n"
     "\t    Enable verbose logging mode.\n\n"
+    "\t-json\n"
+    "\t    Output statistics as JSON on stdout.\n\n"
     "\t-nr, -norecurse\n"
     "\t    Do not recurse into subdirectories; only process the\n"
     "\t    top-level directory.\n\n"
@@ -1849,6 +1857,11 @@ RevAccumulateGlobalRevisionStats(
 
 VOID
 RevOutputRevisionStatistics(
+    VOID
+    );
+
+VOID
+RevOutputRevisionStatisticsJson(
     VOID
     );
 
@@ -3944,6 +3957,7 @@ RevFindRevisionRecordForLanguageByExtension(
      */
     revisionRecord = RevInitializeRevisionRecord(Extension,
                                                  languageOrFileType);
+
     if (revisionRecord == NULL) {
         RevLogError("Failed to initialize a revision record (\"%ls\",\"%ls\").",
                     Extension,
@@ -5374,6 +5388,86 @@ RevOutputRevisionStatistics(
              "---------------------------------------------\n");
 }
 
+VOID
+RevOutputRevisionStatisticsJson(
+    VOID
+    )
+{
+    PLIST_ENTRY entry = NULL;
+    BOOL firstLanguage = TRUE;
+
+    if (RevisionState == NULL) {
+        return;
+    }
+
+    RevPrint(L"{\n");
+
+    //
+    // Totals section.
+    //
+    {
+        ULONGLONG total = RevisionState->CountOfLinesTotal;
+        ULONGLONG blank = RevisionState->CountOfLinesBlank;
+        ULONGLONG comment = RevisionState->CountOfLinesComment;
+        ULONGLONG code = 0;
+
+        if (total >= blank + comment) {
+            code = total - blank - comment;
+        }
+
+        RevPrint(L"  \"Totals\": {\n");
+        RevPrint(L"    \"CountOfFiles\": %u,\n", RevisionState->CountOfFiles);
+        RevPrint(L"    \"CountOfLinesBlank\": %llu,\n", blank);
+        RevPrint(L"    \"CountOfLinesComment\": %llu,\n", comment);
+        RevPrint(L"    \"CountOfLinesCode\": %llu,\n", code);
+        RevPrint(L"    \"CountOfLinesTotal\": %llu\n", total);
+        RevPrint(L"  },\n");
+    }
+
+    //
+    // Per-language statistics.
+    //
+    RevPrint(L"  \"languages\": [\n");
+
+    entry = RevisionState->RevisionRecordListHead.Flink;
+    while (entry != &RevisionState->RevisionRecordListHead) {
+
+        PREVISION_RECORD record = CONTAINING_RECORD(entry,
+                                                    REVISION_RECORD,
+                                                    ListEntry);
+        ULONGLONG total = record->CountOfLinesTotal;
+        ULONGLONG blank = record->CountOfLinesBlank;
+        ULONGLONG comment = record->CountOfLinesComment;
+        ULONGLONG code = 0;
+
+        if (total >= blank + comment) {
+            code = total - blank - comment;
+        }
+
+        if (!firstLanguage) {
+            RevPrint(L",\n");
+        } else {
+            firstLanguage = FALSE;
+        }
+
+        RevPrint(L"    {\n");
+        RevPrint(L"      \"Language\": \"%ls\",\n",
+                 record->ExtensionMapping.LanguageOrFileType);
+        RevPrint(L"      \"CountOfFiles\": %u,\n", record->CountOfFiles);
+        RevPrint(L"      \"CountOfLinesBlank\": %llu,\n", blank);
+        RevPrint(L"      \"CountOfLinesComment\": %llu,\n", comment);
+        RevPrint(L"      \"CountOfLinesCode\": %llu,\n", code);
+        RevPrint(L"      \"CountOfLinesTotal\": %llu\n", total);
+        RevPrint(L"    }");
+
+        entry = entry->Flink;
+    }
+
+    RevPrint(L"\n  ]\n");
+    RevPrint(L"}\n");
+}
+
+
 /**
  * @brief Parses a backend kind name from a command line argument.
  *
@@ -5509,6 +5603,13 @@ wmain(
             if (wcscmp(argument, L"-v") == 0) {
 
                 revisionConfig.IsVerboseMode = TRUE;
+
+            } else if (wcscmp(argument, L"-json") == 0) {
+
+                //
+                // -json: Enable JSON output.
+                //
+                revisionConfig.OutputJson = TRUE;
 
             } else if (wcscmp(argument, L"-nr") == 0 ||
                        wcscmp(argument, L"-norecurse") == 0) {
@@ -5656,6 +5757,10 @@ wmain(
         RevPrintEx(Cyan,
                    L"\tIgnored %d files\n",
                    RevisionState->CountOfIgnoredFiles);
+    }
+
+    if (revisionConfig.OutputJson) {
+        RevOutputRevisionStatisticsJson();
     }
 
 #ifndef NDEBUG
