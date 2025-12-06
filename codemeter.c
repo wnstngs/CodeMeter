@@ -1925,7 +1925,7 @@ RevParseBackendKind(
     do {                                                                       \
         REV_STATUS _tmp = (s);                                                 \
         if (REV_FAILED(_tmp)) {                                                \
-            RevLogStatusError(status, msg);                                    \
+            RevLogStatusError(s, msg);                                         \
             return _tmp;                                                       \
         }                                                                      \
     } while (0)
