@@ -367,6 +367,11 @@ typedef struct REVISION_THREAD_POOL_WORK_ITEM {
 typedef struct REVISION_THREAD_POOL_BACKEND_CONTEXT {
 
     /**
+     * Owning revision instance that this backend is serving.
+     */
+    PREVISION Revision;
+
+    /**
      * Array of worker thread handles.
      */
     PHANDLE WorkerThreads;
@@ -2857,15 +2862,14 @@ RevThreadPoolWorkerThread(
     _In_ LPVOID Parameter
     )
 {
-    //
-    // Global revision pointer published during RevInitializeRevision().
-    //
-    PREVISION revision = RevisionState;
     PREVISION_THREAD_POOL_BACKEND_CONTEXT context = Parameter;
+    PREVISION revision = NULL;
 
     if (context == NULL) {
         return 0;
     }
+
+    revision = context->Revision;
 
     for (;;) {
 
@@ -2991,6 +2995,12 @@ RevThreadPoolBackendInitialize(
     }
 
     ZeroMemory(context, sizeof(*context));
+
+    //
+    // Store the owning revision so worker threads do not need to touch
+    // the global RevisionState.
+    //
+    context->Revision = Revision;
 
     context->WorkerThreadCount = desiredThreads;
     context->WorkerThreads = (PHANDLE)malloc(sizeof(HANDLE) * desiredThreads);
