@@ -42,6 +42,38 @@ Abstract:
 // ------------------------------------------------------- Data Type Definitions
 //
 
+/**
+ * CodeMeter status type.
+ */
+typedef enum _REV_STATUS {
+    REV_STATUS_SUCCESS = 0,
+    REV_STATUS_OUT_OF_MEMORY,
+    REV_STATUS_INVALID_ARGUMENT,
+    REV_STATUS_INVALID_CONFIG,
+    REV_STATUS_COMMAND_LINE_ERROR,
+    REV_STATUS_PATH_NORMALIZATION,
+
+    REV_STATUS_ENGINE_NOT_INITIALIZED,
+
+    REV_STATUS_BACKEND_INIT_FAILED,
+    REV_STATUS_BACKEND_SUBMIT_FAILED,
+    REV_STATUS_BACKEND_SHUTDOWN_FAILED,
+    REV_STATUS_THREADPOOL_INIT_FAILED,
+    REV_STATUS_THREADPOOL_SUBMIT_FAILED,
+
+    REV_STATUS_FILE_OPEN_FAILED,
+    REV_STATUS_FILE_SIZE_QUERY_FAILED,
+    REV_STATUS_FILE_TOO_LARGE,
+    REV_STATUS_FILE_READ_FAILED,
+    REV_STATUS_DIR_ENUM_FAILED,
+
+    REV_STATUS_UTF16_TO_UTF8_FAILED,
+
+    REV_STATUS_NO_LANGUAGE_MAPPING,
+
+    REV_STATUS_UNEXPECTED_ERROR
+} REV_STATUS;
+
 typedef struct ENUMERATION_OPTIONS {
     /**
      * If TRUE, the enumerator will recursively traverse subdirectories.
@@ -255,11 +287,12 @@ typedef struct REVISION_FILE_BACKEND_VTABLE {
      *
      * @param Revision Supplies the revision instance.
      *
-     * @return TRUE if the backend was initialized successfully,
-     *         FALSE otherwise.
+     * @return REV_STATUS_SUCCESS if the backend was initialized
+     *         successfully; an appropriate failure code otherwise
+     *         (for example, REV_STATUS_THREADPOOL_INIT_FAILED).
      */
     _Must_inspect_result_
-    BOOL
+    REV_STATUS
     (*Initialize)(
         _Inout_ PREVISION Revision
         );
@@ -273,10 +306,13 @@ typedef struct REVISION_FILE_BACKEND_VTABLE {
      *
      * @param FindData Supplies basic metadata obtained during enumeration.
      *
-     * @return TRUE if the file was accepted for processing, FALSE otherwise.
+     * @return REV_STATUS_SUCCESS if the file was accepted for processing;
+     *         a failure status (such as REV_STATUS_THREADPOOL_SUBMIT_FAILED
+     *         or REV_STATUS_BACKEND_SUBMIT_FAILED) if the file could not
+     *         be queued.
      */
     _Must_inspect_result_
-    BOOL
+    REV_STATUS
     (*SubmitFile)(
         _Inout_ PREVISION Revision,
         _In_z_ PWCHAR FullPath,
@@ -288,10 +324,12 @@ typedef struct REVISION_FILE_BACKEND_VTABLE {
      *
      * @param Revision Supplies the revision instance.
      *
-     * @return TRUE if the backend was shut down cleanly, FALSE otherwise.
+     * @return REV_STATUS_SUCCESS if the backend was shut down cleanly;
+     *         a failure code (for example, REV_STATUS_BACKEND_SHUTDOWN_FAILED)
+     *         if shutdown did not complete successfully.
      */
     _Must_inspect_result_
-    BOOL
+    REV_STATUS
     (*DrainAndShutdown)(
         _Inout_ PREVISION Revision
         );
@@ -517,9 +555,11 @@ typedef struct COMMENT_STYLE_MAPPING {
  * @param Context Supplies an optional user-defined context pointer that
  *                was passed to the enumerator.
  *
- * @return TRUE to continue enumeration, FALSE to stop.
+ * @return REV_STATUS_SUCCESS to indicate that enumeration may continue;
+ *         any failure status to abort enumeration immediately. The failure
+ *         status is propagated back by RevEnumerateDirectoryWithVisitor().
  */
-typedef BOOL (*PFILE_VISITOR)(
+typedef REV_STATUS (*PFILE_VISITOR)(
     _In_z_ PWCHAR FullPath,
     _In_ const WIN32_FIND_DATAW *FindData,
     _In_opt_ PVOID Context
@@ -546,7 +586,7 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
 /**
  * Maximum length (in characters) of an extension key we support.
  */
-#define MAX_EXTENSION_CCH 64
+#define MAX_EXTENSION_CCH   64
 
 
 /**
@@ -557,10 +597,15 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
 /**
  * The string to be appended to a path to indicate all of its contents.
  */
-#define ASTERISK        L"\\*"
+#define ASTERISK    L"\\*"
 
-#define CARRIAGE_RETURN  '\r'
-#define LINE_FEED        '\n'
+#define CARRIAGE_RETURN '\r'
+#define LINE_FEED       '\n'
+
+#define CURRENT_DIR L"."
+#define PARENT_DIR  L".."
+
+#ifndef CODEMETER_ENGINE_ONLY
 
 const WCHAR WelcomeString[] =
     L"CodeMeter v0.0.1                 Copyright(c) 2023 Glebs\n"
@@ -587,6 +632,8 @@ const WCHAR UsageString[] =
     "\t-threads <N>\n"
     "\t    Limit the number of worker threads used by the backend.\n"
     "\t    Only meaningful for the thread pool backend.\n\n";
+
+#endif // !CODEMETER_ENGINE_ONLY
 
 /**
  * @brief This array holds ANSI escape sequences for changing text color
@@ -1636,6 +1683,12 @@ BOOL SupportAnsi;
 // ------------------------------------------------ Internal Function Prototypes
 //
 
+static
+const WCHAR *
+RevStatusToString(
+    REV_STATUS Status
+    );
+
 _Ret_notnull_
 static
 PWCHAR
@@ -1676,7 +1729,7 @@ RevInitializeExtensionHashTable(
 
 _Must_inspect_result_
 static
-BOOL
+REV_STATUS
 RevConvertUtf16FileBufferToUtf8(
     _Inout_ PFILE_BUFFER_VIEW View,
     _In_ DWORD BytesRead,
@@ -1685,32 +1738,32 @@ RevConvertUtf16FileBufferToUtf8(
     );
 
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevReadFileIntoBufferView(
     _In_z_ PWCHAR FilePath,
     _Out_ PFILE_BUFFER_VIEW View
     );
 
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevInitializeFileBackend(
     _Inout_ PREVISION Revision
     );
 
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevDrainAndShutdownFileBackend(
     _Inout_ PREVISION Revision
     );
 
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevInitializeRevision(
     _In_ PREVISION_CONFIG InitParams
     );
 
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevStartRevision(
     VOID
     );
@@ -1729,7 +1782,7 @@ RevGetLanguageFamily(
     );
 
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevResolveExtensionForFileName(
     _In_z_ const WCHAR *FileName,
     _Out_writes_(ExtensionBufferCch) PWCHAR ExtensionBuffer,
@@ -1738,7 +1791,7 @@ RevResolveExtensionForFileName(
     );
 
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevResolveExtensionForPath(
     _In_z_ const WCHAR *FilePath,
     _Out_writes_(ExtensionBufferCch) PWCHAR ExtensionBuffer,
@@ -1752,11 +1805,11 @@ RevMapExtensionToLanguage(
     _In_z_ PWCHAR Extension
     );
 
-_Ret_maybenull_
 _Must_inspect_result_
-PREVISION_RECORD
+REV_STATUS
 RevFindRevisionRecordForLanguageByExtension(
-    _In_z_ PWCHAR Extension
+    _In_z_ PWCHAR Extension,
+    _Outptr_result_maybenull_ PREVISION_RECORD *RevisionRecord
     );
 
 FORCEINLINE
@@ -1811,7 +1864,7 @@ RevCountLinesWithFamily(
     );
 
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevEnumerateDirectoryWithVisitor(
     _In_z_ PWCHAR RootDirectoryPath,
     _In_ PFILE_VISITOR Visitor,
@@ -1820,7 +1873,7 @@ RevEnumerateDirectoryWithVisitor(
     );
 
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevRevisionFileVisitor(
     _In_z_ PWCHAR FullPath,
     _In_ const WIN32_FIND_DATAW *FindData,
@@ -1828,13 +1881,14 @@ RevRevisionFileVisitor(
     );
 
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevShouldReviseFile(
-    _In_z_ const WCHAR *FileName
+    _In_z_ const WCHAR *FileName,
+    _Out_ PBOOL ShouldRevise
     );
 
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevReviseFile(
     _In_z_ PWCHAR FilePath
     );
@@ -1866,7 +1920,7 @@ RevOutputRevisionStatisticsJson(
     );
 
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevParseBackendKind(
     _In_z_ PWCHAR Value,
     _Out_ REVISION_FILE_BACKEND_KIND *BackendKind
@@ -1876,6 +1930,101 @@ RevParseBackendKind(
 // ------------------------------------------------------------------- Functions
 //
 
+
+//
+// CodeMeter status helpers.
+//
+// REV_STATUS_SUCCESS indicates success; any other value describes a
+// specific failure category. Callers should use REV_SUCCEEDED/REV_FAILED
+// to test the result and may log a human-readable string via
+// RevStatusToString().
+//
+#define REV_SUCCEEDED(s) ((s) == REV_STATUS_SUCCESS)
+#define REV_FAILED(s)    ((s) != REV_STATUS_SUCCESS)
+
+#define RETURN_IF_FAILED(s)                                                    \
+    do {                                                                       \
+        REV_STATUS _tmp = (s);                                                 \
+        if (REV_FAILED(_tmp)) {                                                \
+            return _tmp;                                                       \
+        }                                                                      \
+    } while (0)
+
+#define RETURN_IF_FAILED_LOG(s, msg)                                           \
+    do {                                                                       \
+        REV_STATUS _tmp = (s);                                                 \
+        if (REV_FAILED(_tmp)) {                                                \
+            RevLogStatusError(status, msg);                                    \
+            return _tmp;                                                       \
+        }                                                                      \
+    } while (0)
+
+#define GOTO_IF_FAILED(label, s)                                               \
+    do {                                                                       \
+        status = (s);                                                          \
+        if (REV_FAILED(status)) {                                              \
+            goto label;                                                        \
+        }                                                                      \
+    } while (0)
+
+#define GOTO_IF_FAILED_LOG(label, expr, msg)                                   \
+    do {                                                                       \
+        status = (expr);                                                       \
+        if (REV_FAILED(status)) {                                              \
+            RevLogStatusError(status, msg);                                    \
+            goto label;                                                        \
+        }                                                                      \
+    } while (0)
+
+static
+const WCHAR *
+RevStatusToString(
+    REV_STATUS Status
+    )
+{
+    switch (Status) {
+    case REV_STATUS_SUCCESS:
+        return L"Success";
+    case REV_STATUS_INVALID_ARGUMENT:
+        return L"Invalid argument";
+    case REV_STATUS_INVALID_CONFIG:
+        return L"Invalid configuration";
+    case REV_STATUS_COMMAND_LINE_ERROR:
+        return L"Command line error";
+    case REV_STATUS_PATH_NORMALIZATION:
+        return L"Path normalization failed";
+    case REV_STATUS_ENGINE_NOT_INITIALIZED:
+        return L"Engine not initialized";
+    case REV_STATUS_BACKEND_INIT_FAILED:
+        return L"Backend initialization failed";
+    case REV_STATUS_BACKEND_SUBMIT_FAILED:
+        return L"Backend submit failed";
+    case REV_STATUS_BACKEND_SHUTDOWN_FAILED:
+        return L"Backend shutdown failed";
+    case REV_STATUS_THREADPOOL_INIT_FAILED:
+        return L"Thread pool initialization failed";
+    case REV_STATUS_THREADPOOL_SUBMIT_FAILED:
+        return L"Thread pool submit failed";
+    case REV_STATUS_FILE_OPEN_FAILED:
+        return L"File open failed";
+    case REV_STATUS_FILE_SIZE_QUERY_FAILED:
+        return L"File size query failed";
+    case REV_STATUS_FILE_TOO_LARGE:
+        return L"File too large";
+    case REV_STATUS_FILE_READ_FAILED:
+        return L"File read failed";
+    case REV_STATUS_DIR_ENUM_FAILED:
+        return L"Directory enumeration failed";
+    case REV_STATUS_UTF16_TO_UTF8_FAILED:
+        return L"UTF-16 to UTF-8 conversion failed";
+    case REV_STATUS_NO_LANGUAGE_MAPPING:
+        return L"No language mapping";
+    case REV_STATUS_UNEXPECTED_ERROR:
+        return L"Unexpected error";
+    default:
+        return L"Unknown status";
+    }
+}
 
 /**
  * @brief This function initializes a LIST_ENTRY structure that
@@ -2025,6 +2174,20 @@ RevPrintEx(
             fprintf(stdout, SupportAnsi ? "\033[0m\n" : "\n");                 \
         }                                                                      \
     } while (0)
+
+FORCEINLINE
+static
+VOID
+RevLogStatusError(
+    _In_ REV_STATUS Status,
+    _In_z_ const char *Message
+    )
+{
+    RevLogError("%s (status=%d: %ls)",
+                Message,
+                (int)Status,
+                RevStatusToString(Status));
+}
 
 /**
  * @brief This function retrieves the calling thread's last-error code
@@ -2526,20 +2689,20 @@ RevConvertUtf16FileBufferToUtf8(
  *          is responsible for freeing View->Buffer using free().
  */
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevReadFileIntoBufferView(
     _In_z_ PWCHAR FilePath,
     _Out_ PFILE_BUFFER_VIEW View
     )
 {
-    BOOL status = TRUE;
+    REV_STATUS status = REV_STATUS_SUCCESS;
     HANDLE file = INVALID_HANDLE_VALUE;
     LARGE_INTEGER fileSize;
     DWORD bytesRead = 0;
 
     if (FilePath == NULL || View == NULL) {
         RevLogError("RevReadFileIntoBufferView received invalid parameter/-s.");
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     ZeroMemory(View, sizeof(*View));
@@ -2559,7 +2722,7 @@ RevReadFileIntoBufferView(
         RevLogError("Failed to open the file \"%ls\". Error: %ls.",
                     FilePath,
                     RevGetLastKnownWin32Error());
-        status = FALSE;
+        status = REV_STATUS_FILE_OPEN_FAILED;
         goto Exit;
     }
 
@@ -2572,7 +2735,7 @@ RevReadFileIntoBufferView(
                     "The last known error: %ls.",
                     FilePath,
                     RevGetLastKnownWin32Error());
-        status = FALSE;
+        status = REV_STATUS_FILE_SIZE_QUERY_FAILED;
         goto Exit;
     }
 
@@ -2608,7 +2771,7 @@ RevReadFileIntoBufferView(
     if (View->Buffer == NULL) {
         RevLogError("Failed to allocate %llu bytes for file buffer.",
                     fileSize.QuadPart * sizeof(CHAR));
-        status = FALSE;
+        status = REV_STATUS_OUT_OF_MEMORY;
         goto Exit;
     }
 
@@ -2624,7 +2787,7 @@ RevReadFileIntoBufferView(
         RevLogError("Failed to read the file \"%ls\". Error: %ls.",
                     FilePath,
                     RevGetLastKnownWin32Error());
-        status = FALSE;
+        status = REV_STATUS_FILE_READ_FAILED;
         goto Exit;
     }
 
@@ -2671,18 +2834,15 @@ RevReadFileIntoBufferView(
                 // UTF-8 so that downstream line counting logic can treat it
                 // uniformly with other text encodings.
                 //
-                if (!RevConvertUtf16FileBufferToUtf8(View,
-                                                     bytesRead,
-                                                     isBigEndian,
-                                                     FilePath)) {
-
-                    //
-                    // Conversion failed.
-                    // Propagate as a fatal error for this file.
-                    //
-                    status = FALSE;
-                    goto Exit;
-                }
+                status = RevConvertUtf16FileBufferToUtf8(View,
+                                                         bytesRead,
+                                                         isBigEndian,
+                                                         FilePath);
+                //
+                // Conversion failed.
+                // Propagate as a fatal error for this file.
+                //
+                GOTO_IF_FAILED(Exit, status);
 
                 //
                 // The helper may decide that the file should be skipped
@@ -2752,7 +2912,7 @@ Exit:
         CloseHandle(file);
     }
 
-    if (!status) {
+    if (REV_FAILED(status)) {
         if (View->Buffer != NULL) {
             free(View->Buffer);
         }
@@ -2780,13 +2940,13 @@ Exit:
  */
 _Must_inspect_result_
 static
-BOOL
+REV_STATUS
 RevSynchronousBackendInitialize(
     _Inout_ PREVISION Revision
     )
 {
     UNREFERENCED_PARAMETER(Revision);
-    return TRUE;
+    return REV_STATUS_SUCCESS;
 }
 
 /**
@@ -2797,7 +2957,7 @@ RevSynchronousBackendInitialize(
  */
 _Must_inspect_result_
 static
-BOOL
+REV_STATUS
 RevSynchronousBackendSubmitFile(
     _Inout_ PREVISION Revision,
     _In_z_ PWCHAR FullPath,
@@ -2807,7 +2967,7 @@ RevSynchronousBackendSubmitFile(
     UNREFERENCED_PARAMETER(FindData);
 
     if (Revision == NULL || FullPath == NULL) {
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     //
@@ -2825,7 +2985,7 @@ RevSynchronousBackendSubmitFile(
  */
 _Must_inspect_result_
 static
-BOOL
+REV_STATUS
 RevSynchronousBackendDrainAndShutdown(
     _Inout_ PREVISION Revision
     )
@@ -2835,7 +2995,7 @@ RevSynchronousBackendDrainAndShutdown(
     //
     // No outstanding work to drain for synchronous backend.
     //
-    return TRUE;
+    return REV_STATUS_SUCCESS;
 }
 
 /**
@@ -2958,7 +3118,7 @@ RevThreadPoolWorkerThread(
  */
 _Must_inspect_result_
 static
-BOOL
+REV_STATUS
 RevThreadPoolBackendInitialize(
     _Inout_ PREVISION Revision
     )
@@ -2969,7 +3129,7 @@ RevThreadPoolBackendInitialize(
     PREVISION_THREAD_POOL_BACKEND_CONTEXT context = NULL;
 
     if (Revision == NULL) {
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     //
@@ -2994,7 +3154,7 @@ RevThreadPoolBackendInitialize(
 
     if (context == NULL) {
         RevLogError("Failed to allocate thread pool backend context.");
-        return FALSE;
+        return REV_STATUS_OUT_OF_MEMORY;
     }
 
     ZeroMemory(context, sizeof(*context));
@@ -3006,7 +3166,7 @@ RevThreadPoolBackendInitialize(
         RevLogError("Failed to allocate thread handle array for %lu threads.",
                     desiredThreads);
         free(context);
-        return FALSE;
+        return REV_STATUS_OUT_OF_MEMORY;
     }
 
     ZeroMemory(context->WorkerThreads, sizeof(HANDLE) * desiredThreads);
@@ -3059,12 +3219,12 @@ RevThreadPoolBackendInitialize(
         free(context->WorkerThreads);
         free(context);
 
-        return FALSE;
+        return REV_STATUS_THREADPOOL_INIT_FAILED;
     }
 
     Revision->BackendContext = context;
 
-    return TRUE;
+    return REV_STATUS_SUCCESS;
 }
 
 /**
@@ -3072,7 +3232,7 @@ RevThreadPoolBackendInitialize(
  */
 _Must_inspect_result_
 static
-BOOL
+REV_STATUS
 RevThreadPoolBackendSubmitFile(
     _Inout_ PREVISION Revision,
     _In_z_ PWCHAR FullPath,
@@ -3085,13 +3245,13 @@ RevThreadPoolBackendSubmitFile(
     PWCHAR pathCopy = NULL;
 
     if (Revision == NULL || FullPath == NULL) {
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     context = (PREVISION_THREAD_POOL_BACKEND_CONTEXT)Revision->BackendContext;
 
     if (context == NULL) {
-        return FALSE;
+        return REV_STATUS_BACKEND_INIT_FAILED;
     }
 
     //
@@ -3102,7 +3262,7 @@ RevThreadPoolBackendSubmitFile(
 
     if (pathCopy == NULL) {
         RevLogError("Failed to allocate path copy for \"%ls\".", FullPath);
-        return FALSE;
+        return REV_STATUS_OUT_OF_MEMORY;
     }
 
     memcpy(pathCopy,
@@ -3118,7 +3278,7 @@ RevThreadPoolBackendSubmitFile(
     if (workItem == NULL) {
         RevLogError("Failed to allocate thread pool work item.");
         free(pathCopy);
-        return FALSE;
+        return REV_STATUS_OUT_OF_MEMORY;
     }
 
     ZeroMemory(workItem, sizeof(*workItem));
@@ -3145,7 +3305,7 @@ RevThreadPoolBackendSubmitFile(
         free(pathCopy);
         free(workItem);
 
-        return FALSE;
+        return REV_STATUS_THREADPOOL_SUBMIT_FAILED;
     }
 
     if (context->WorkTail == NULL) {
@@ -3164,7 +3324,7 @@ RevThreadPoolBackendSubmitFile(
 
     LeaveCriticalSection(&context->QueueLock);
 
-    return TRUE;
+    return REV_STATUS_SUCCESS;
 }
 
 /**
@@ -3180,7 +3340,7 @@ RevThreadPoolBackendSubmitFile(
  */
 _Must_inspect_result_
 static
-BOOL
+REV_STATUS
 RevThreadPoolBackendDrainAndShutdown(
     _Inout_ PREVISION Revision
     )
@@ -3189,7 +3349,7 @@ RevThreadPoolBackendDrainAndShutdown(
     ULONG Index;
 
     if (Revision == NULL) {
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     Context = (PREVISION_THREAD_POOL_BACKEND_CONTEXT)Revision->BackendContext;
@@ -3198,7 +3358,7 @@ RevThreadPoolBackendDrainAndShutdown(
         //
         // Backend was never initialized; nothing to shut down.
         //
-        return TRUE;
+        return REV_STATUS_SUCCESS;
     }
 
     //
@@ -3305,7 +3465,7 @@ RevThreadPoolBackendDrainAndShutdown(
 
     Revision->BackendContext = NULL;
 
-    return TRUE;
+    return REV_STATUS_SUCCESS;
 }
 
 /**
@@ -3326,20 +3486,23 @@ static const REVISION_FILE_BACKEND_VTABLE RevThreadPoolBackendVtable = {
  *
  * @param Revision Supplies the revision instance.
  *
- * @return TRUE if the backend was initialized successfully, FALSE otherwise.
+ * @return REV_STATUS_SUCCESS if a backend was initialized successfully;
+ *         REV_STATUS_BACKEND_INIT_FAILED if all backend initialization
+ *         attempts failed; or another failure status if the parameters
+ *         were invalid.
  */
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevInitializeFileBackend(
     _Inout_ PREVISION Revision
     )
 {
+    REV_STATUS status = REV_STATUS_SUCCESS;
     REVISION_FILE_BACKEND_KIND requested;
     REVISION_FILE_BACKEND_KIND effective;
-    BOOL result = FALSE;
 
     if (Revision == NULL) {
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     requested = Revision->Config.BackendKind;
@@ -3354,21 +3517,21 @@ RevInitializeFileBackend(
 
     case FileBackendSynchronous:
         Revision->BackendVtable = &RevSynchronousBackendVtable;
-        result = Revision->BackendVtable->Initialize(Revision);
+        status = Revision->BackendVtable->Initialize(Revision);
         break;
 
     case FileBackendThreadPool:
         Revision->BackendVtable = &RevThreadPoolBackendVtable;
-        result = Revision->BackendVtable->Initialize(Revision);
+        status = Revision->BackendVtable->Initialize(Revision);
         //
         // Fall back from thread pool to synchronous when thread pool
         // initialization fails.
         //
-        if (!result) {
+        if (REV_FAILED(status)) {
             RevLogWarning("Thread pool backend failed to initialize, "
                           "falling back to synchronous backend.");
             Revision->BackendVtable = &RevSynchronousBackendVtable;
-            result = Revision->BackendVtable->Initialize(Revision);
+            status = Revision->BackendVtable->Initialize(Revision);
             effective = FileBackendSynchronous;
         }
         break;
@@ -3380,20 +3543,20 @@ RevInitializeFileBackend(
                       "Falling back to synchronous backend.",
                       (LONG)effective);
         Revision->BackendVtable = &RevSynchronousBackendVtable;
-        result = Revision->BackendVtable->Initialize(Revision);
+        status = Revision->BackendVtable->Initialize(Revision);
         effective = FileBackendSynchronous;
         break;
     }
 
-    if (!result) {
+    if (REV_FAILED(status)) {
         Revision->BackendVtable = NULL;
         Revision->BackendKind = FileBackendAuto;
-        return FALSE;
+        return REV_STATUS_BACKEND_INIT_FAILED;
     }
 
     Revision->BackendKind = effective;
 
-    return TRUE;
+    return status;
 }
 
 /**
@@ -3402,16 +3565,18 @@ RevInitializeFileBackend(
  *
  * @param Revision Supplies the revision instance.
  *
- * @return TRUE if the backend was shut down cleanly, FALSE otherwise.
+ * @return REV_STATUS_SUCCESS if the backend was shut down cleanly;
+ *         a failure status from the underlying backend vtable in case
+ *         of errors.
  */
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevDrainAndShutdownFileBackend(
     _Inout_ PREVISION Revision
     )
 {
     if (Revision == NULL || Revision->BackendVtable == NULL) {
-        return TRUE;
+        return REV_STATUS_SUCCESS;
     }
 
     return Revision->BackendVtable->DrainAndShutdown(Revision);
@@ -3423,10 +3588,12 @@ RevDrainAndShutdownFileBackend(
  *
  * @param InitParams Supplies the revision initialization parameters.
  *
- * @return TRUE if succeeded, FALSE if failed.
+ * @return REV_STATUS_SUCCESS on success;
+ *         REV_STATUS_INVALID_CONFIG for invalid InitParams;
+ *         REV_STATUS_OUT_OF_MEMORY if allocation fails.
  */
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevInitializeRevision(
     _In_ PREVISION_CONFIG InitParams
     )
@@ -3434,14 +3601,15 @@ RevInitializeRevision(
     PREVISION revision = NULL;
 
     if (InitParams == NULL || InitParams->RootDirectory == NULL) {
-        RevLogError("RevInitializeRevision received invalid Config.");
-        return FALSE;
+        RevLogError("RevInitializeRevision received invalid configuration.");
+        return REV_STATUS_INVALID_CONFIG;
     }
 
     revision = (PREVISION)malloc(sizeof(REVISION));
+
     if (revision == NULL) {
         RevLogError("Failed to allocate memory for REVISION.");
-        return FALSE;
+        return REV_STATUS_OUT_OF_MEMORY;
     }
 
     ZeroMemory(revision, sizeof(REVISION));
@@ -3475,7 +3643,7 @@ RevInitializeRevision(
     //
     RevInitializeExtensionHashTable();
 
-    return TRUE;
+    return REV_STATUS_SUCCESS;
 }
 
 /**
@@ -3489,34 +3657,38 @@ RevInitializeRevision(
  *  - a directory path, in which case a directory enumeration is performed; or
  *  - a path to a single file, in which case only that file is revised.
  *
- * @return TRUE if succeeded, FALSE if failed.
+ * @return REV_STATUS_SUCCESS if the revision completed successfully;
+ *         REV_STATUS_DIR_ENUM_FAILED if directory enumeration failed;
+ *         or another status code indicating the first fatal failure.
  */
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevStartRevision(
     VOID
     )
 {
-    BOOL status = TRUE;
+    REV_STATUS status = REV_STATUS_SUCCESS;
+    REV_STATUS shutdownStatus;
     PREVISION revision = RevisionState;
     DWORD attributes = 0;
     PWCHAR rootPath = NULL;
+    BOOL shouldRevise = FALSE;
 
     if (revision == NULL) {
         RevLogError("RevStartRevision called before RevInitializeRevision.");
-        return FALSE;
+        return REV_STATUS_ENGINE_NOT_INITIALIZED;
     }
 
     rootPath = revision->Config.RootDirectory;
     if (rootPath == NULL) {
         RevLogError("Revision config does not contain a RootDirectory.");
-        return FALSE;
+        return REV_STATUS_INVALID_CONFIG;
     }
 
-    if (!RevInitializeFileBackend(revision)) {
-        RevLogError("Failed to initialize the file processing backend.");
-        return FALSE;
-    }
+    status = RevInitializeFileBackend(revision);
+
+    RETURN_IF_FAILED_LOG(status,
+                         "Failed to initialize the file processing backend");
 
     attributes = GetFileAttributesW(rootPath);
     if (attributes == INVALID_FILE_ATTRIBUTES) {
@@ -3525,7 +3697,7 @@ RevStartRevision(
                     rootPath,
                     RevGetLastKnownWin32Error());
 
-        status = FALSE;
+        status = REV_STATUS_FILE_OPEN_FAILED;
         goto Exit;
     }
 
@@ -3556,7 +3728,13 @@ RevStartRevision(
                         fileName,
                         _TRUNCATE);
 
-        if (!RevShouldReviseFile(findData.cFileName)) {
+        status = RevShouldReviseFile(findData.cFileName, &shouldRevise);
+
+        if (REV_FAILED(status)) {
+            goto Exit;
+        }
+
+        if (!shouldRevise) {
 
             InterlockedIncrement(
                 (volatile LONG *)&revision->CountOfIgnoredFiles);
@@ -3565,18 +3743,20 @@ RevStartRevision(
 
             if (revision->BackendVtable == NULL) {
                 RevLogError("File backend is not available.");
-                status = FALSE;
+                status = REV_STATUS_BACKEND_SUBMIT_FAILED;
                 goto Exit;
             }
 
-            if (!revision->BackendVtable->SubmitFile(revision,
-                                                     rootPath,
-                                                     &findData)) {
+            status = revision->BackendVtable->SubmitFile(revision,
+                                                         rootPath,
+                                                         &findData);
 
-                RevLogError("File backend failed to submit \"%ls\".",
-                            rootPath);
-                status = FALSE;
-
+            if (REV_FAILED(status)) {
+                RevLogError("File backend failed to submit \"%ls\" "
+                            "(status=%d: %ls)",
+                            rootPath,
+                            (int)status,
+                            RevStatusToString(status));
                 goto Exit;
             }
         }
@@ -3585,24 +3765,29 @@ RevStartRevision(
 
         ENUMERATION_OPTIONS options = revision->Config.EnumerationOptions;
 
-        if (!RevEnumerateDirectoryWithVisitor(rootPath,
-                                              RevRevisionFileVisitor,
-                                              revision,
-                                              &options)) {
+        status = RevEnumerateDirectoryWithVisitor(rootPath,
+                                                  RevRevisionFileVisitor,
+                                                  revision,
+                                                  &options);
 
-            RevLogError("Failed to start enumeration in directory \"%ls\".",
-                        rootPath);
-            status = FALSE;
-
+        if (REV_FAILED(status)) {
+            RevLogError("Directory enumeration failed for \"%ls\" "
+                        "(status=%d: %ls)",
+                        rootPath,
+                        (int)status,
+                        RevStatusToString(status));
             goto Exit;
         }
     }
 
 Exit:
 
-    if (!RevDrainAndShutdownFileBackend(revision)) {
-        RevLogError("Failed to drain and shutdown file backend.");
-        status = FALSE;
+    shutdownStatus = RevDrainAndShutdownFileBackend(revision);
+
+    if (REV_FAILED(shutdownStatus) && REV_SUCCEEDED(status)) {
+        RevLogStatusError(shutdownStatus,
+                          "Failed to drain and shutdown file backend");
+        status = shutdownStatus;
     }
 
     return status;
@@ -3675,10 +3860,12 @@ RevInitializeRevisionRecord(
  *        file type string if successful; may be NULL if caller is not
  *        interested in the language.
  *
- * @return TRUE if a known extension/language was resolved, FALSE otherwise.
+ * @return REV_STATUS_SUCCESS if a known extension/language was resolved;
+ *         REV_STATUS_NO_LANGUAGE_MAPPING if no mapping exists;
+ *         REV_STATUS_INVALID_ARGUMENT if parameters are invalid.
  */
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevResolveExtensionForFileName(
     _In_z_ const WCHAR *FileName,
     _Out_writes_(ExtensionBufferCch) PWCHAR ExtensionBuffer,
@@ -3699,14 +3886,14 @@ RevResolveExtensionForFileName(
         ExtensionBuffer == NULL ||
         ExtensionBufferCch < 4) {
 
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     ExtensionBuffer[0] = L'\0';
 
     length = wcslen(FileName);
     if (length == 0) {
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     //
@@ -3732,7 +3919,7 @@ RevResolveExtensionForFileName(
                 *LanguageOrFileType = language;
             }
 
-            return TRUE;
+            return REV_STATUS_SUCCESS;
         }
     }
 
@@ -3764,7 +3951,7 @@ RevResolveExtensionForFileName(
                     *LanguageOrFileType = language;
                 }
 
-                return TRUE;
+                return REV_STATUS_SUCCESS;
             }
         }
 
@@ -3777,7 +3964,7 @@ RevResolveExtensionForFileName(
     //
     ExtensionBuffer[0] = L'\0';
 
-    return FALSE;
+    return REV_STATUS_NO_LANGUAGE_MAPPING;
 }
 
 /**
@@ -3797,10 +3984,12 @@ RevResolveExtensionForFileName(
  *        file type string if successful; may be NULL if caller is not
  *        interested in the language.
  *
- * @return TRUE if a known extension/language was resolved, FALSE otherwise.
+ * @return REV_STATUS_SUCCESS if a known extension/language was resolved;
+ *         REV_STATUS_NO_LANGUAGE_MAPPING if no mapping exists;
+ *         REV_STATUS_INVALID_ARGUMENT if parameters are invalid.
  */
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevResolveExtensionForPath(
     _In_z_ const WCHAR *FilePath,
     _Out_writes_(ExtensionBufferCch) PWCHAR ExtensionBuffer,
@@ -3814,7 +4003,7 @@ RevResolveExtensionForPath(
     const WCHAR *separator = NULL;
 
     if (FilePath == NULL) {
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     lastBackslash = wcsrchr(FilePath, L'\\');
@@ -3903,15 +4092,17 @@ RevMapExtensionToLanguage(
  * revision records.
  *
  * @param Extension Supplies the file extension to search for.
+ * @param RevisionRecord Receives a pointer to the matching REVISION_RECORD
+ *        on success, or NULL if no record exists for this extension.
  *
- * @return If a matching REVISION_RECORD is found, returns a pointer to
- * that record; otherwise, returns NULL.
+ * @return REV_STATUS_SUCCESS on success;
+ *         REV_STATUS_INVALID_ARGUMENT if Extension or RevisionRecord is NULL.
  */
-_Ret_maybenull_
 _Must_inspect_result_
-PREVISION_RECORD
+REV_STATUS
 RevFindRevisionRecordForLanguageByExtension(
-    _In_z_ PWCHAR Extension
+    _In_z_ PWCHAR Extension,
+    _Outptr_result_maybenull_ PREVISION_RECORD *RevisionRecord
     )
 {
     PLIST_ENTRY entry = NULL;
@@ -3920,7 +4111,7 @@ RevFindRevisionRecordForLanguageByExtension(
 
     if (Extension == NULL) {
         RevLogError("Extension is NULL.");
-        return NULL;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     /*
@@ -3930,7 +4121,7 @@ RevFindRevisionRecordForLanguageByExtension(
     if (languageOrFileType == NULL) {
         RevLogError("No langauge/file type match was found for the extension \"%ls\".",
                     Extension);
-        return NULL;
+        return REV_STATUS_NO_LANGUAGE_MAPPING;
     }
 
     assert(RevisionState != NULL);
@@ -3945,7 +4136,9 @@ RevFindRevisionRecordForLanguageByExtension(
          */
         if (wcscmp(revisionRecord->ExtensionMapping.LanguageOrFileType,
                    languageOrFileType) == 0) {
-            return revisionRecord;
+
+            *RevisionRecord = revisionRecord;
+            return REV_STATUS_SUCCESS;
         }
 
         entry = entry->Flink;
@@ -3962,7 +4155,7 @@ RevFindRevisionRecordForLanguageByExtension(
         RevLogError("Failed to initialize a revision record (\"%ls\",\"%ls\").",
                     Extension,
                     languageOrFileType);
-        return NULL;
+        return REV_STATUS_OUT_OF_MEMORY;
     }
 
     /*
@@ -3971,7 +4164,9 @@ RevFindRevisionRecordForLanguageByExtension(
     RevInsertTailList(&RevisionState->RevisionRecordListHead,
                       &revisionRecord->ListEntry);
 
-    return revisionRecord;
+    *RevisionRecord = revisionRecord;
+
+    return REV_STATUS_SUCCESS;
 }
 
 /**
@@ -4022,10 +4217,13 @@ RevGetLanguageFamily(
  * @param Options Supplies optional enumeration options. If NULL, default
  *                options are used (recursive traversal).
  *
- * @return TRUE if succeeded, FALSE if failed.
+ * @return REV_STATUS_SUCCESS if enumeration completed without errors and
+ *         all visitor calls returned REV_STATUS_SUCCESS;
+ *         REV_STATUS_DIR_ENUM_FAILED if directory enumeration fails;
+ *         or any failure status returned by the Visitor implementation.
  */
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevEnumerateDirectoryWithVisitor(
     _In_z_ PWCHAR RootDirectoryPath,
     _In_ PFILE_VISITOR Visitor,
@@ -4033,7 +4231,9 @@ RevEnumerateDirectoryWithVisitor(
     _In_opt_ PENUMERATION_OPTIONS Options
     )
 {
-    BOOL status = TRUE;
+    REV_STATUS status = REV_STATUS_SUCCESS;
+    REV_STATUS subStatus;
+    REV_STATUS visitorStatus;
     HANDLE findFile = INVALID_HANDLE_VALUE;
     WIN32_FIND_DATAW findFileData;
     PWCHAR searchPath = NULL;
@@ -4045,8 +4245,7 @@ RevEnumerateDirectoryWithVisitor(
     // Validate parameters.
     //
     if (RootDirectoryPath == NULL || Visitor == NULL) {
-        RevLogError("Invalid parameter/-s.");
-        status = FALSE;
+        status = REV_STATUS_INVALID_ARGUMENT;
         goto Exit;
     }
 
@@ -4054,7 +4253,7 @@ RevEnumerateDirectoryWithVisitor(
 
     if (rootLength == 0) {
         RevLogError("Root directory path is empty.");
-        status = FALSE;
+        status = REV_STATUS_INVALID_ARGUMENT;
         goto Exit;
     }
 
@@ -4066,7 +4265,7 @@ RevEnumerateDirectoryWithVisitor(
         RevLogError("The root directory path \"%ls\" must not contain "
                     "wildcard characters.",
                     RootDirectoryPath);
-        status = FALSE;
+        status = REV_STATUS_INVALID_ARGUMENT;
         goto Exit;
     }
 
@@ -4108,7 +4307,7 @@ RevEnumerateDirectoryWithVisitor(
 
         if (searchPath == NULL) {
             RevLogError("Failed to allocate memory for search path.");
-            status = FALSE;
+            status = REV_STATUS_OUT_OF_MEMORY;
             goto Exit;
         }
 
@@ -4135,7 +4334,7 @@ RevEnumerateDirectoryWithVisitor(
                     "The last known error: %ls.",
                     RootDirectoryPath,
                     RevGetLastKnownWin32Error());
-        status = FALSE;
+        status = REV_STATUS_DIR_ENUM_FAILED;
         goto Exit;
     }
 
@@ -4146,10 +4345,8 @@ RevEnumerateDirectoryWithVisitor(
         //
         // Skip the current directory (".") and parent directory ("..").
         //
-#define ONE_DOT L"."
-#define TWO_DOTS L".."
-        if (wcscmp(findFileData.cFileName, ONE_DOT) == 0 ||
-            wcscmp(findFileData.cFileName, TWO_DOTS) == 0) {
+        if (wcscmp(findFileData.cFileName, CURRENT_DIR) == 0 ||
+            wcscmp(findFileData.cFileName, PARENT_DIR) == 0) {
 
             continue;
         }
@@ -4178,7 +4375,7 @@ RevEnumerateDirectoryWithVisitor(
 
             if (subPath == NULL) {
                 RevLogError("Failed to allocate memory for subpath.");
-                status = FALSE;
+                status = REV_STATUS_OUT_OF_MEMORY;
                 break;
             }
 
@@ -4194,9 +4391,11 @@ RevEnumerateDirectoryWithVisitor(
         //
         // Process the entry with the visitor.
         //
-        if (!Visitor(subPath, &findFileData, Context)) {
+        visitorStatus = Visitor(subPath, &findFileData, Context);
+
+        if (REV_FAILED(visitorStatus)) {
+            status = visitorStatus;
             free(subPath);
-            status = FALSE;
             break;
         }
 
@@ -4215,16 +4414,21 @@ RevEnumerateDirectoryWithVisitor(
                 continue;
             }
 
-            if (!RevEnumerateDirectoryWithVisitor(subPath,
-                                                  Visitor,
-                                                  Context,
-                                                  Options)) {
+            subStatus = RevEnumerateDirectoryWithVisitor(subPath,
+                Visitor,
+                Context,
+                Options);
+            if (REV_FAILED(subStatus)) {
 
-                RevLogError("Recursive subdirectory traversal failed for "
-                            "\"%ls\".",
-                            subPath);
+                RevLogError(
+                    "Recursive subdirectory traversal failed for \"%ls\" "
+                    "(status=%d: %ls)",
+                    subPath,
+                    (int)subStatus,
+                    RevStatusToString(subStatus));
+
+                status = subStatus;
                 free(subPath);
-                status = FALSE;
                 break;
             }
         }
@@ -4237,12 +4441,14 @@ RevEnumerateDirectoryWithVisitor(
     // If FindNextFileW failed for a reason other than "no more files",
     // treat it as an error.
     //
-    if (GetLastError() != ERROR_NO_MORE_FILES) {
+    if (status == REV_STATUS_SUCCESS &&
+        GetLastError() != ERROR_NO_MORE_FILES) {
+
         RevLogError("FindNextFileW failed while enumerating directory \"%ls\". "
                     "The last known error: %ls.",
                     RootDirectoryPath,
                     RevGetLastKnownWin32Error());
-        status = FALSE;
+        status = REV_STATUS_DIR_ENUM_FAILED;
     }
 
 Exit:
@@ -4268,25 +4474,30 @@ Exit:
  *
  * @param Context Supplies an optional user-defined context pointer.
  *
- * @return TRUE to continue enumeration, FALSE to stop.
+ * @return REV_STATUS_SUCCESS on success (including ignored files);
+ *         REV_STATUS_INVALID_ARGUMENT for bad parameters;
+ *         REV_STATUS_BACKEND_SUBMIT_FAILED if the backend could not
+ *         accept the file; or other per-file error codes from helpers.
  */
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevRevisionFileVisitor(
     _In_z_ PWCHAR FullPath,
     _In_ const WIN32_FIND_DATAW *FindData,
     _Inout_opt_ PVOID Context
     )
 {
+    REV_STATUS status = REV_STATUS_SUCCESS;
     PREVISION revision = (PREVISION)Context;
     BOOL isDirectory;
+    BOOL shouldRevise;
 
     if (revision == NULL) {
         revision = RevisionState;
     }
 
     if (FullPath == NULL || FindData == NULL || revision == NULL) {
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     isDirectory = (FindData->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -4297,15 +4508,19 @@ RevRevisionFileVisitor(
         // Subdirectories are handled by the enumerator; there is no work
         // to submit for directories in this visitor.
         //
-        return TRUE;
-
+        return status;
     }
 
-    if (!RevShouldReviseFile(FindData->cFileName)) {
+    status = RevShouldReviseFile(FindData->cFileName, &shouldRevise);
+
+    if (REV_FAILED(status)) {
+        return status;
+    }
+
+    if (!shouldRevise) {
 
         InterlockedIncrement((volatile LONG *)&revision->CountOfIgnoredFiles);
-
-        return TRUE;
+        return status;
     }
 
     if (revision->BackendVtable == NULL) {
@@ -4316,15 +4531,18 @@ RevRevisionFileVisitor(
         return RevReviseFile(FullPath);
     }
 
-    if (!revision->BackendVtable->SubmitFile(revision,
+    status = revision->BackendVtable->SubmitFile(revision,
                                              FullPath,
-                                             FindData)) {
+                                             FindData);
 
-        RevLogError("File backend failed to submit \"%ls\".", FullPath);
-        return FALSE;
+    if (REV_FAILED(status)) {
+        RevLogError("File backend failed to submit \"%ls\" (status=%d: %ls).",
+                    FullPath,
+                    (int)status,
+                    RevStatusToString(status));
     }
 
-    return TRUE;
+    return status;
 }
 
 /**
@@ -4339,21 +4557,29 @@ RevRevisionFileVisitor(
  *     ".Makefile", etc.) via the ".<FileName>" key convention.
  *
  * @param FileName Supplies the file name (without path).
+ * @param ShouldRevise Receives TRUE if the file should be revised,
+ *                     FALSE otherwise.
  *
- * @return TRUE if the file should be revised, FALSE otherwise.
+ * @return REV_STATUS_SUCCESS on success. If there is no language mapping
+ *         for the file, the function returns REV_STATUS_SUCCESS and leaves
+ *         *ShouldRevise set to FALSE. Other status codes indicate failures
+ *         while resolving the extension or internal errors.
  */
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevShouldReviseFile(
-    _In_z_ const WCHAR *FileName
+    _In_z_ const WCHAR *FileName,
+    _Out_ PBOOL ShouldRevise
     )
 {
-    BOOL status = FALSE;
+    REV_STATUS status;
     WCHAR extensionBuffer[MAX_EXTENSION_CCH];
+
+    *ShouldRevise = FALSE;
 
     if (FileName == NULL) {
         RevLogError("FileName is NULL.");
-        return status;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     //
@@ -4365,7 +4591,20 @@ RevShouldReviseFile(
                                             ARRAYSIZE(extensionBuffer),
                                             NULL);
 
-    return status;
+    if (status == REV_STATUS_NO_LANGUAGE_MAPPING) {
+        //
+        // Not an error – just a file we ignore.
+        //
+        return REV_STATUS_SUCCESS;
+    }
+
+    if (REV_FAILED(status)) {
+        return status;
+    }
+
+    *ShouldRevise = TRUE;
+
+    return REV_STATUS_SUCCESS;
 }
 
 /**
@@ -5098,15 +5337,23 @@ RevCountLinesWithFamily(
  *
  * @param FilePath Supplies the path to the file to be revised.
  *
- * @return TRUE if succeeded, FALSE if failed.
+ * @return REV_STATUS_SUCCESS if the file was processed successfully;
+ *         REV_STATUS_NO_LANGUAGE_MAPPING if no mapping was found for
+ *         the file extension; or another failure code (for example,
+ *         REV_STATUS_FILE_OPEN_FAILED, REV_STATUS_FILE_READ_FAILED,
+ *         REV_STATUS_UTF16_TO_UTF8_FAILED) if I/O or decoding fails.
+ *
+ * @remark Per-file failures are reported via the return status but do
+ *         not necessarily abort the entire revision; callers decide how
+ *         to aggregate errors across files.
  */
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevReviseFile(
     _In_z_ PWCHAR FilePath
     )
 {
-    BOOL status = TRUE;
+    REV_STATUS status = REV_STATUS_SUCCESS;
     PREVISION_RECORD revisionRecord = NULL;
     PWCHAR languageOrFileType = NULL;
     COMMENT_STYLE_FAMILY languageFamily = LanguageFamilyUnknown;
@@ -5118,7 +5365,7 @@ RevReviseFile(
 
     if (FilePath == NULL) {
         RevLogError("FilePath is NULL.");
-        status = FALSE;
+        status = REV_STATUS_INVALID_ARGUMENT;
         goto Exit;
     }
 
@@ -5127,10 +5374,10 @@ RevReviseFile(
     // This ensures consistent handling of multi-dot and special whole-name
     // mappings.
     //
-    if (!RevResolveExtensionForPath(FilePath,
-                                    extensionBuffer,
-                                    ARRAYSIZE(extensionBuffer),
-                                    &languageOrFileType)) {
+    if (REV_FAILED(RevResolveExtensionForPath(FilePath,
+                                              extensionBuffer,
+                                              ARRAYSIZE(extensionBuffer),
+                                              &languageOrFileType))) {
 
         //
         // This should not normally happen because RevShouldReviseFile()
@@ -5138,7 +5385,7 @@ RevReviseFile(
         // gracefully for robustness.
         //
         RevLogWarning("No language mapping found for \"%ls\".", FilePath);
-        status = FALSE;
+        status = REV_STATUS_NO_LANGUAGE_MAPPING;
         goto UpdateStats;
     }
 
@@ -5147,12 +5394,13 @@ RevReviseFile(
     //
     // Read the file into a buffer view.
     //
-    if (!RevReadFileIntoBufferView(FilePath, &view)) {
+    status = RevReadFileIntoBufferView(FilePath, &view);
+
+    if (REV_FAILED(status)) {
         //
         // Errors already logged by the helper. Do not propagate as fatal
         // for the entire revision; behave like a per-file failure.
         //
-        status = FALSE;
         goto UpdateStats;
     }
 
@@ -5171,6 +5419,7 @@ RevReviseFile(
 UpdateStats:
 
     if (RevisionState == NULL) {
+        status = REV_STATUS_ENGINE_NOT_INITIALIZED;
         goto Exit;
     }
 
@@ -5179,23 +5428,30 @@ UpdateStats:
     //
     EnterCriticalSection(&RevisionState->StatsLock);
 
-    revisionRecord =
-        RevFindRevisionRecordForLanguageByExtension(extensionBuffer);
+    REV_STATUS findStatus =
+        RevFindRevisionRecordForLanguageByExtension(extensionBuffer,
+                                                    &revisionRecord);
 
-    if (revisionRecord == NULL) {
+    if (REV_FAILED(findStatus) || revisionRecord == NULL) {
 
-        revisionRecord = RevInitializeRevisionRecord(extensionBuffer,
-                                                     languageOrFileType);
-
-        if (revisionRecord == NULL) {
-            RevLogError("Failed to initialize a revision record for \"%ls\".",
-                        extensionBuffer);
-
-            LeaveCriticalSection(&RevisionState->StatsLock);
-
-            status = FALSE;
-            goto Exit;
+        if (findStatus == REV_STATUS_NO_LANGUAGE_MAPPING) {
+            //
+            // This should not normally happen because RevShouldReviseFile()
+            // filters by extension ahead of time.
+            //
+            RevLogWarning("No language mapping found (under lock) for \"%ls\".",
+                          FilePath);
+        } else {
+            RevLogError("Failed to resolve or initialize a revision record for \"%ls\" "
+                        "(status=%d: %ls).",
+                        extensionBuffer,
+                        (int)findStatus,
+                        RevStatusToString(findStatus));
         }
+
+        LeaveCriticalSection(&RevisionState->StatsLock);
+        status = findStatus;
+        goto Exit;
     }
 
     LeaveCriticalSection(&RevisionState->StatsLock);
@@ -5480,17 +5736,19 @@ RevOutputRevisionStatisticsJson(
  *
  * @param BackendKind Receives the parsed backend kind on success.
  *
- * @return TRUE if the backend name was recognized, FALSE otherwise.
+ * @return REV_STATUS_SUCCESS if the backend name was recognized;
+ *         REV_STATUS_INVALID_ARGUMENT if the value is NULL or does not
+ *         map to a known backend.
  */
 _Must_inspect_result_
-BOOL
+REV_STATUS
 RevParseBackendKind(
     _In_z_ PWCHAR Value,
     _Out_ REVISION_FILE_BACKEND_KIND *BackendKind
     )
 {
     if (Value == NULL || BackendKind == NULL) {
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     if (wcscmp(Value, L"auto") == 0) {
@@ -5509,11 +5767,13 @@ RevParseBackendKind(
 
     } else {
 
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
-    return TRUE;
+    return REV_STATUS_SUCCESS;
 }
+
+#ifndef CODEMETER_ENGINE_ONLY
 
 int
 wmain(
@@ -5521,7 +5781,7 @@ wmain(
     wchar_t *argv[]
     )
 {
-    int status = 0;
+    REV_STATUS status = REV_STATUS_SUCCESS;
     HRESULT hr = 0;
     BOOL measuringTime = TRUE;
     double resultTime = 0;
@@ -5576,7 +5836,7 @@ wmain(
                                &revisionConfig.RootDirectory);
     if (FAILED(hr)) {
         RevLogError("Path normalization failed: 0x%08X", hr);
-        status = -1;
+        status = REV_STATUS_PATH_NORMALIZATION;
         goto Exit;
     }
 
@@ -5632,17 +5892,19 @@ wmain(
                 if (index + 1 >= argc) {
 
                     RevLogError("Missing value for -backend option.");
-                    status = -1;
+                    status = REV_STATUS_COMMAND_LINE_ERROR;
                     goto Exit;
                 }
 
                 backendName = argv[index + 1];
 
-                if (!RevParseBackendKind(backendName,
-                                         &revisionConfig.BackendKind)) {
+                status = RevParseBackendKind(backendName,
+                                             &revisionConfig.BackendKind);
 
-                    RevLogError("Unknown backend type: %ls", backendName);
-                    status = -1;
+                if (REV_FAILED(status)) {
+                    RevLogStatusError(status,
+                                      "Unknown backend type specified");
+                    status = REV_STATUS_COMMAND_LINE_ERROR;
                     goto Exit;
                 }
 
@@ -5661,7 +5923,7 @@ wmain(
                 if (index + 1 >= argc) {
 
                     RevLogError("Missing value for -threads option.");
-                    status = -1;
+                    status = REV_STATUS_COMMAND_LINE_ERROR;
                     goto Exit;
                 }
 
@@ -5682,7 +5944,7 @@ wmain(
 
                         RevLogError("Invalid value for -threads option: %ls",
                                     threadsValue);
-                        status = -1;
+                        status = REV_STATUS_COMMAND_LINE_ERROR;
                         goto Exit;
                     }
 
@@ -5718,10 +5980,8 @@ wmain(
     // Initialize the revision engine.
     //
     status = RevInitializeRevision(&revisionConfig);
-    if (status == FALSE) {
-        RevLogError("Failed to initialize the revision engine.");
-        goto Exit;
-    }
+
+    GOTO_IF_FAILED_LOG(Exit, status, "Failed to initialize revision engine.");
 
     if (!QueryPerformanceFrequency(&frequency)) {
         RevLogError("Failed to retrieve the frequency of the performance "
@@ -5733,11 +5993,12 @@ wmain(
         QueryPerformanceCounter(&startQpc);
     }
 
+    //
+    // Start the engine.
+    //
     status = RevStartRevision();
-    if (status == FALSE) {
-        RevLogError("Failed to start the revision engine.");
-        goto Exit;
-    }
+
+    GOTO_IF_FAILED_LOG(Exit, status, "Failed to start the revision engine.");
 
     if (measuringTime) {
         QueryPerformanceCounter(&endQpc);
@@ -5775,3 +6036,5 @@ Exit:
 
     return status;
 }
+
+#endif // !CODEMETER_ENGINE_ONLY
