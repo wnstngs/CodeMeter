@@ -3241,6 +3241,11 @@ RevThreadPoolBackendSubmitFile(
                                  INFINITE);
     }
 
+    //
+    // We may have been woken because a shutdown is in progress (StopEnqueuing
+    // set to TRUE) rather than because the queue has spare capacity. Re-check
+    // StopEnqueuing before actually enqueuing the work item.
+    //
     if (context->StopEnqueuing) {
 
         LeaveCriticalSection(&context->QueueLock);
