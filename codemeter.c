@@ -47,7 +47,9 @@ Abstract:
  */
 typedef enum _REV_STATUS {
     REV_STATUS_SUCCESS = 0,
+
     REV_STATUS_OUT_OF_MEMORY,
+
     REV_STATUS_INVALID_ARGUMENT,
     REV_STATUS_INVALID_CONFIG,
     REV_STATUS_COMMAND_LINE_ERROR,
@@ -1784,6 +1786,13 @@ RevInitializeRevisionRecord(
     _In_z_ PWCHAR LanguageOrFileType
     );
 
+_Must_inspect_result_
+static
+REV_STATUS
+RevInitializeRevisionRecords(
+    _Inout_ PREVISION Revision
+    );
+
 COMMENT_STYLE_FAMILY
 RevGetLanguageFamily(
     _In_z_ PWCHAR LanguageOrFileType
@@ -1814,9 +1823,10 @@ RevMapExtensionToLanguage(
     );
 
 _Must_inspect_result_
+static
 REV_STATUS
-RevFindRevisionRecordForLanguageByExtension(
-    _In_z_ PWCHAR Extension,
+RevFindRevisionRecordForLanguage(
+    _In_z_ PWCHAR LanguageOrFileType,
     _Outptr_result_maybenull_ PREVISION_RECORD *RevisionRecord
     );
 
@@ -3550,18 +3560,21 @@ RevInitializeRevision(
     _In_ PREVISION_CONFIG InitParams
     )
 {
+    REV_STATUS status = REV_STATUS_SUCCESS;
     PREVISION revision = NULL;
 
     if (InitParams == NULL || InitParams->RootDirectory == NULL) {
         RevLogError("RevInitializeRevision received invalid configuration.");
-        return REV_STATUS_INVALID_CONFIG;
+        status = REV_STATUS_INVALID_CONFIG;
+        return status;
     }
 
     revision = (PREVISION)malloc(sizeof(REVISION));
 
     if (revision == NULL) {
         RevLogError("Failed to allocate memory for REVISION.");
-        return REV_STATUS_OUT_OF_MEMORY;
+        status = REV_STATUS_OUT_OF_MEMORY;
+        return status;
     }
 
     ZeroMemory(revision, sizeof(REVISION));
@@ -3595,7 +3608,12 @@ RevInitializeRevision(
     //
     RevInitializeExtensionHashTable();
 
-    return REV_STATUS_SUCCESS;
+    status = RevInitializeRevisionRecords(revision);
+
+    RETURN_IF_FAILED_LOG(status,
+                         "Failed to initialize per-language revision records");
+
+    return status;
 }
 
 /**
@@ -3782,6 +3800,108 @@ RevInitializeRevisionRecord(
     revisionRecord->CountOfFiles = 0;
 
     return revisionRecord;
+}
+
+/**
+ * @brief Pre-allocates revision records for all distinct languages/file types.
+ *
+ * This helper walks the ExtensionMappingTable and creates a single
+ * REVISION_RECORD for each unique LanguageOrFileType string. The resulting
+ * list is immutable for the lifetime of the revision, which allows lock-free
+ * lookups in the hot path (RevReviseFile).
+ *
+ * @param Revision
+ *      Supplies the revision instance for which records should be created.
+ *
+ * @return REV_STATUS_SUCCESS on success;
+ *         REV_STATUS_INVALID_ARGUMENT if Revision is NULL;
+ *         REV_STATUS_OUT_OF_MEMORY if allocation of any record fails. On
+ *         failure, any partially-created records are freed and the list is
+ *         reset to empty.
+ */
+static
+REV_STATUS
+RevInitializeRevisionRecords(
+    _Inout_ PREVISION Revision
+    )
+{
+    SIZE_T i = 0;
+    SIZE_T j = 0;
+    SIZE_T languageCount = 0;
+    PWCHAR seenLanguages[ARRAYSIZE(ExtensionMappingTable)];
+    PWCHAR language;
+    BOOL alreadyAdded;
+    PREVISION_RECORD record;
+    PLIST_ENTRY entry;
+    PREVISION_RECORD toFree;
+
+    if (Revision == NULL) {
+        return REV_STATUS_INVALID_ARGUMENT;
+    }
+
+    ZeroMemory(seenLanguages, sizeof(seenLanguages));
+
+    for (i = 0; i < ARRAYSIZE(ExtensionMappingTable); i += 1) {
+
+        language = ExtensionMappingTable[i].LanguageOrFileType;
+        alreadyAdded = FALSE;
+
+        //
+        // Check whether we've already created a record for this language
+        // string. We compare by wcscmp because the mapping table is not
+        // guaranteed to canonicalize pointers.
+        //
+        for (j = 0; j < languageCount; j += 1) {
+            if (wcscmp(seenLanguages[j], language) == 0) {
+                alreadyAdded = TRUE;
+                break;
+            }
+        }
+
+        if (alreadyAdded) {
+            continue;
+        }
+
+        //
+        // Create a revision record, using the first extension we saw for
+        // this language as the representative. Statistics are keyed by
+        // language/file type rather than individual extensions.
+        //
+        record = RevInitializeRevisionRecord(ExtensionMappingTable[i].Extension,
+                                             language);
+
+        if (record == NULL) {
+
+            //
+            // Clean up any records created so far to avoid leaking memory
+            // if the caller tears down the partially initialized revision.
+            //
+            entry = Revision->RevisionRecordListHead.Flink;
+
+            while (entry != &Revision->RevisionRecordListHead) {
+
+                toFree = CONTAINING_RECORD(entry,
+                                           REVISION_RECORD,
+                                           ListEntry);
+
+                entry = entry->Flink;
+
+                free(toFree);
+            }
+
+            RevInitializeListHead(&Revision->RevisionRecordListHead);
+
+            return REV_STATUS_OUT_OF_MEMORY;
+        }
+
+        RevInsertTailList(&Revision->RevisionRecordListHead,
+                          &record->ListEntry);
+
+        seenLanguages[languageCount] = language;
+        languageCount += 1;
+    }
+
+    return REV_STATUS_SUCCESS;
 }
 
 /**
@@ -4039,86 +4159,75 @@ RevMapExtensionToLanguage(
 }
 
 /**
- * @brief This function checks if a REVISION_RECORD for a language/file
- * type with a given extension exists in the global revision's list of
- * revision records.
+ * @brief Finds the revision record for a given language/file type.
  *
- * @param Extension Supplies the file extension to search for.
- * @param RevisionRecord Receives a pointer to the matching REVISION_RECORD
- *        on success, or NULL if no record exists for this extension.
+ * This helper assumes that RevInitializeRevisionRecords() has already
+ * created a single REVISION_RECORD for each distinct LanguageOrFileType
+ * value in ExtensionMappingTable. It performs a linear scan over the
+ * immutable list of records and returns the first match.
+ *
+ * @param LanguageOrFileType
+ *      Supplies the language/file type string as returned from
+ *      RevResolveExtensionForPath() or RevMapExtensionToLanguage().
+ *
+ * @param RevisionRecord
+ *      Receives the matching revision record on success; set to NULL
+ *      on failure.
  *
  * @return REV_STATUS_SUCCESS on success;
- *         REV_STATUS_INVALID_ARGUMENT if Extension or RevisionRecord is NULL.
+ *         REV_STATUS_INVALID_ARGUMENT if parameters are invalid;
+ *         REV_STATUS_ENGINE_NOT_INITIALIZED if RevisionState is NULL;
+ *         REV_STATUS_NO_LANGUAGE_MAPPING if no record exists for the
+ *         supplied language (should not normally occur).
  */
-_Must_inspect_result_
+static
 REV_STATUS
-RevFindRevisionRecordForLanguageByExtension(
-    _In_z_ PWCHAR Extension,
+RevFindRevisionRecordForLanguage(
+    _In_z_ PWCHAR LanguageOrFileType,
     _Outptr_result_maybenull_ PREVISION_RECORD *RevisionRecord
     )
 {
     PLIST_ENTRY entry = NULL;
-    PWCHAR languageOrFileType = NULL;
-    PREVISION_RECORD revisionRecord = NULL;
+    PREVISION_RECORD record;
 
-    if (Extension == NULL) {
-        RevLogError("Extension is NULL.");
+    if (RevisionRecord != NULL) {
+        *RevisionRecord = NULL;
+    }
+
+    if (LanguageOrFileType == NULL || RevisionRecord == NULL) {
         return REV_STATUS_INVALID_ARGUMENT;
     }
 
-    /*
-     * Map the provided file extension to a language or file type.
-     */
-    languageOrFileType = RevMapExtensionToLanguage(Extension);
-    if (languageOrFileType == NULL) {
-        RevLogError("No langauge/file type match was found for the extension \"%ls\".",
-                    Extension);
-        return REV_STATUS_NO_LANGUAGE_MAPPING;
+    if (RevisionState == NULL) {
+        return REV_STATUS_ENGINE_NOT_INITIALIZED;
     }
-
-    assert(RevisionState != NULL);
 
     entry = RevisionState->RevisionRecordListHead.Flink;
 
     while (entry != &RevisionState->RevisionRecordListHead) {
-        revisionRecord = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
 
-        /*
-         * Check if there is a match.
-         */
-        if (wcscmp(revisionRecord->ExtensionMapping.LanguageOrFileType,
-                   languageOrFileType) == 0) {
+        record = CONTAINING_RECORD(entry, REVISION_RECORD, ListEntry);
 
-            *RevisionRecord = revisionRecord;
+        if (wcscmp(record->ExtensionMapping.LanguageOrFileType,
+                   LanguageOrFileType) == 0) {
+
+            *RevisionRecord = record;
+
             return REV_STATUS_SUCCESS;
         }
 
         entry = entry->Flink;
     }
 
-    /*
-     * If no matching language or file type was found for the provided extension
-     * initialize a new revision record.
-     */
-    revisionRecord = RevInitializeRevisionRecord(Extension,
-                                                 languageOrFileType);
+    //
+    // This should not happen if RevInitializeRevisionRecords() was
+    // successful, because every LanguageOrFileType in the mapping table
+    // should have a corresponding record.
+    //
+    RevLogWarning("No revision record found for language/file type \"%ls\".",
+                  LanguageOrFileType);
 
-    if (revisionRecord == NULL) {
-        RevLogError("Failed to initialize a revision record (\"%ls\",\"%ls\").",
-                    Extension,
-                    languageOrFileType);
-        return REV_STATUS_OUT_OF_MEMORY;
-    }
-
-    /*
-     * Add the new revision record to the global list of revision records.
-     */
-    RevInsertTailList(&RevisionState->RevisionRecordListHead,
-                      &revisionRecord->ListEntry);
-
-    *RevisionRecord = revisionRecord;
-
-    return REV_STATUS_SUCCESS;
+    return REV_STATUS_NO_LANGUAGE_MAPPING;
 }
 
 /**
@@ -5324,6 +5433,7 @@ RevReviseFile(
     )
 {
     REV_STATUS status = REV_STATUS_SUCCESS;
+    REV_STATUS findStatus;
     PREVISION_RECORD revisionRecord = NULL;
     PWCHAR languageOrFileType = NULL;
     COMMENT_STYLE_FAMILY languageFamily = LanguageFamilyUnknown;
@@ -5394,37 +5504,33 @@ UpdateStats:
     }
 
     //
-    // Resolve or create the revision record for this extension under the lock.
+    // If we never resolved a language (for example, because
+    // RevResolveExtensionForPath() failed), there is no revision record
+    // to update. Per-file failures have already been logged above.
     //
-    EnterCriticalSection(&RevisionState->StatsLock);
-
-    REV_STATUS findStatus =
-        RevFindRevisionRecordForLanguageByExtension(extensionBuffer,
-                                                    &revisionRecord);
-
-    if (REV_FAILED(findStatus) || revisionRecord == NULL) {
-
-        if (findStatus == REV_STATUS_NO_LANGUAGE_MAPPING) {
-            //
-            // This should not normally happen because RevShouldReviseFile()
-            // filters by extension ahead of time.
-            //
-            RevLogWarning("No language mapping found (under lock) for \"%ls\".",
-                          FilePath);
-        } else {
-            RevLogError("Failed to resolve or initialize a revision record for \"%ls\" "
-                        "(status=%d: %ls).",
-                        extensionBuffer,
-                        (int)findStatus,
-                        RevStatusToString(findStatus));
-        }
-
-        LeaveCriticalSection(&RevisionState->StatsLock);
-        status = findStatus;
+    if (languageOrFileType == NULL) {
         goto Exit;
     }
 
-    LeaveCriticalSection(&RevisionState->StatsLock);
+    //
+    // Resolve or create the revision record for this extension under the lock.
+    //
+
+    findStatus = RevFindRevisionRecordForLanguage(
+        languageOrFileType,
+        &revisionRecord);
+
+    if (REV_FAILED(findStatus) || revisionRecord == NULL) {
+
+        RevLogError("Failed to resolve revision record for \"%ls\" "
+                    "(status=%d: %ls).",
+                    languageOrFileType,
+                    (int)findStatus,
+                    RevStatusToString(findStatus));
+
+        status = findStatus;
+        goto Exit;
+    }
 
     //
     // Atomically accumulate per-record and global statistics.
