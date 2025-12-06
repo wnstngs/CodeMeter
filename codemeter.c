@@ -4550,11 +4550,13 @@ RevCountLinesCStyle(
     _Inout_ PFILE_LINE_STATS FileLineStats
     )
 {
-    SIZE_T index = {0};
+    const CHAR *p = Buffer;
+    const CHAR *end = Buffer + Length;
     BOOL inBlockComment = FALSE;
     BOOL inLineComment = FALSE;
     BOOL inString = FALSE;
     CHAR stringDelim = 0;
+    BOOL escapeInString = FALSE;
     BOOL sawCode = FALSE;
     BOOL sawComment = FALSE;
     BOOL sawNonWhitespace = FALSE;
@@ -4564,17 +4566,13 @@ RevCountLinesCStyle(
         return;
     }
 
-    FileLineStats->CountOfLinesTotal = 0;
-    FileLineStats->CountOfLinesBlank = 0;
-    FileLineStats->CountOfLinesComment = 0;
+    while (p < end) {
 
-    for (index = 0; index < Length; index += 1) {
-
-        CHAR currentChar = Buffer[index];
+        CHAR currentChar = *p;
         CHAR nextChar;
 
-        if (index + 1 < Length) {
-            nextChar = Buffer[index + 1];
+        if (p + 1 < end) {
+            nextChar = p[1];
         } else {
             nextChar = 0;
         }
@@ -4586,16 +4584,27 @@ RevCountLinesCStyle(
         if (currentChar == CARRIAGE_RETURN || currentChar == LINE_FEED) {
 
             if (previousWasCR && currentChar == LINE_FEED) {
+                //
+                // We've already classified the line at the CR; skip the LF.
+                //
                 previousWasCR = FALSE;
+                p += 1;
                 continue;
             }
 
+            //
+            // Classify and updates statistics.
+            //
             RevClassifyCompletedLine(sawNonWhitespace,
                                      sawCode,
                                      sawComment,
                                      inBlockComment,
                                      FileLineStats);
 
+            //
+            // Reset per-line state, but preserve block-comment state which
+            // can span lines.
+            //
             sawCode = FALSE;
             sawComment = FALSE;
             sawNonWhitespace = FALSE;
@@ -4603,93 +4612,96 @@ RevCountLinesCStyle(
 
             previousWasCR = (currentChar == CARRIAGE_RETURN);
 
+            p += 1;
             continue;
         }
 
         previousWasCR = FALSE;
 
+        //
+        // Track whether this line has any non-whitespace at all.
+        //
         if (!isspace((UCHAR)currentChar)) {
             sawNonWhitespace = TRUE;
         }
 
         //
-        // Inside a block comment: everything until "*/" is comment.
+        // If we're in a line comment, everything until newline is comment.
+        //
+        if (inLineComment) {
+            sawComment = TRUE;
+            p += 1;
+            continue;
+        }
+
+        //
+        // While in a block comment, look only for the closing "*/".
         //
         if (inBlockComment) {
             sawComment = TRUE;
 
             if (currentChar == '*' && nextChar == '/') {
-
-                //
-                // Consume '/'
-                //
                 inBlockComment = FALSE;
-                index += 1;
+                p += 2;
+            } else {
+                p += 1;
             }
 
             continue;
         }
 
         //
-        // Inside a line comment: everything until newline is comment.
-        //
-        if (inLineComment) {
-            sawComment = TRUE;
-            continue;
-        }
-
-        //
-        // Handle characters inside a string literal.
+        // Handle string literals with a simple backslash-escape mechanism.
         //
         if (inString) {
+            sawCode = TRUE;
 
-            if (currentChar == '\\' && (index + 1) < Length) {
+            if (escapeInString) {
+                //
+                // This character is escaped; just consume it.
+                //
+                escapeInString = FALSE;
 
+            } else if (currentChar == '\\') {
                 //
-                // Skip escaped character.
+                // Next character is escaped.
                 //
-                index += 1;
+                escapeInString = TRUE;
 
             } else if (currentChar == stringDelim) {
+                //
+                // End of string literal.
+                //
                 inString = FALSE;
+                stringDelim = 0;
             }
 
-            sawCode = TRUE;
+            p += 1;
             continue;
         }
 
         //
-        // Outside strings and comments.
+        // Not in comment or string.
+        // Recognize the start of comments and strings, or treat as code.
         //
 
         //
-        // Line comment: // ...
+        // Line comment: // ... until EOL.
         //
         if (currentChar == '/' && nextChar == '/') {
-
             inLineComment = TRUE;
             sawComment = TRUE;
-
-            //
-            // Optionally consume the second '/' so it will not be
-            // re-processed as part of the comment body.
-            //
-            index += 1;
+            p += 2;
             continue;
         }
 
         //
-        // Block comment: /* ... *\/
+        // Block comment: /* ... */ (no nesting).
         //
         if (currentChar == '/' && nextChar == '*') {
-
             inBlockComment = TRUE;
             sawComment = TRUE;
-
-            //
-            // Consume '*'
-            //
-            index += 1;
+            p += 2;
             continue;
         }
 
@@ -4700,6 +4712,8 @@ RevCountLinesCStyle(
             inString = TRUE;
             stringDelim = currentChar;
             sawCode = TRUE;
+            escapeInString = FALSE;
+            p += 1;
             continue;
         }
 
@@ -4710,10 +4724,12 @@ RevCountLinesCStyle(
         if (!isspace((UCHAR)currentChar)) {
             sawCode = TRUE;
         }
+
+        p += 1;
     }
 
     //
-    // Handle the final line when the file does not end with a newline.
+    // If the file doesn't end with a newline, classify the last line.
     //
     RevMaybeClassifyLastLine(sawNonWhitespace,
                              sawCode,
@@ -4757,9 +4773,11 @@ RevCountLinesLineCommentStyle(
     _Inout_ PFILE_LINE_STATS FileLineStats
     )
 {
-    SIZE_T index;
+    const CHAR *p = Buffer;
+    const CHAR *end = Buffer + Length;
     BOOL inString = FALSE;
     CHAR stringDelim = 0;
+    BOOL escapeInString = FALSE;
     BOOL inLineComment = FALSE;
     BOOL sawCode = FALSE;
     BOOL sawComment = FALSE;
@@ -4770,34 +4788,30 @@ RevCountLinesLineCommentStyle(
         return;
     }
 
-    FileLineStats->CountOfLinesTotal = 0;
-    FileLineStats->CountOfLinesBlank = 0;
-    FileLineStats->CountOfLinesComment = 0;
+    while (p < end) {
 
-    for (index = 0; index < Length; index += 1) {
-
-        CHAR currentChar = Buffer[index];
+        CHAR currentChar = *p;
         CHAR nextChar;
 
-        if (index + 1 < Length) {
-            nextChar = Buffer[index + 1];
+        if (p + 1 < end) {
+            nextChar = p[1];
         } else {
             nextChar = 0;
         }
 
         //
-        // Handle CR and LF as line terminators, merge CRLF into a single
-        // logical newline.
+        // Newline handling with CRLF merge.
         //
         if (currentChar == CARRIAGE_RETURN || currentChar == LINE_FEED) {
 
             if (previousWasCR && currentChar == LINE_FEED) {
                 previousWasCR = FALSE;
+                p += 1;
                 continue;
             }
 
             //
-            // N.B. No block comment state.
+            // There is no block-comment state for this style; pass FALSE.
             //
             RevClassifyCompletedLine(sawNonWhitespace,
                                      sawCode,
@@ -4810,8 +4824,9 @@ RevCountLinesLineCommentStyle(
             sawNonWhitespace = FALSE;
             inLineComment = FALSE;
 
-            previousWasCR = (currentChar == CARRIAGE_RETURN);
+            previousWasCR = currentChar == CARRIAGE_RETURN;
 
+            p += 1;
             continue;
         }
 
@@ -4822,85 +4837,91 @@ RevCountLinesLineCommentStyle(
         }
 
         //
-        // Handle characters inside a line comment.
+        // Inside a line comment: everything until newline is comment.
         //
         if (inLineComment) {
             sawComment = TRUE;
+            p += 1;
             continue;
         }
 
         //
-        // Handle characters inside a string literal.
+        // Handle string literals with simple backslash escaping.
         //
         if (inString) {
-            if (currentChar == '\\' && (index + 1) < Length) {
-                //
-                // Skip escaped character.
-                //
-                index += 1;
+            sawCode = TRUE;
+
+            if (escapeInString) {
+                escapeInString = FALSE;
+
+            } else if (currentChar == '\\') {
+                escapeInString = TRUE;
+
             } else if (currentChar == stringDelim) {
                 inString = FALSE;
+                stringDelim = 0;
             }
 
-            sawCode = TRUE;
+            p += 1;
             continue;
         }
 
         //
-        // Outside strings and comments.
+        // Not currently in comment or string. Look for comment start or
+        // start of a string literal.
         //
 
-        //
-        // Start of string literal.
-        //
-        if (currentChar == '"' || currentChar == '\'') {
-            inString = TRUE;
-            stringDelim = currentChar;
-            sawCode = TRUE;
-            continue;
-        }
-
-        //
-        // Start of line comment (single-char or two-char prefix).
-        //
         if (SecondCommentChar == 0) {
 
-            if (FirstCommentChar != 0 &&
-                currentChar == FirstCommentChar) {
-
+            //
+            // Single-character prefix, e.g. "#", ";", "-".
+            //
+            if (currentChar == FirstCommentChar) {
                 inLineComment = TRUE;
                 sawComment = TRUE;
+                p += 1;
                 continue;
             }
 
         } else {
 
+            //
+            // Two-character prefix, e.g. "--".
+            //
             if (currentChar == FirstCommentChar &&
                 nextChar == SecondCommentChar) {
 
                 inLineComment = TRUE;
                 sawComment = TRUE;
-
-                //
-                // Consume the second character of the prefix so it isn't
-                // re-processed.
-                //
-                index += 1;
+                p += 2;
                 continue;
             }
         }
 
         //
-        // Any other non-whitespace character outside comments and strings
-        // is treated as code.
+        // String literal start.
+        //
+        if (currentChar == '"' || currentChar == '\'') {
+            inString = TRUE;
+            stringDelim = currentChar;
+            escapeInString = FALSE;
+            sawCode = TRUE;
+            p += 1;
+            continue;
+        }
+
+        //
+        // Any other non-whitespace outside comments/strings is code.
         //
         if (!isspace((UCHAR)currentChar)) {
             sawCode = TRUE;
         }
+
+        p += 1;
     }
 
     //
-    // Handle the final line when the file does not end with a newline.
+    // Handle last line without terminating newline.
     //
     RevMaybeClassifyLastLine(sawNonWhitespace,
                              sawCode,
@@ -4938,7 +4959,8 @@ RevCountLinesXmlStyle(
     _Inout_ PFILE_LINE_STATS FileLineStats
     )
 {
-    SIZE_T index;
+    const CHAR *p = Buffer;
+    const CHAR *end = Buffer + Length;
     BOOL inBlockComment = FALSE;
     BOOL sawCode = FALSE;
     BOOL sawComment = FALSE;
@@ -4949,43 +4971,43 @@ RevCountLinesXmlStyle(
         return;
     }
 
-    FileLineStats->CountOfLinesTotal = 0;
-    FileLineStats->CountOfLinesBlank = 0;
-    FileLineStats->CountOfLinesComment = 0;
+    while (p < end) {
 
-    for (index = 0; index < Length; index += 1) {
+        CHAR currentChar = *p;
 
-        CHAR currentChar = Buffer[index];
+        //
+        // Precompute lookahead for comment delimiters where needed.
+        //
         CHAR nextChar;
         CHAR thirdChar;
         CHAR fourthChar;
 
-        if (index + 1 < Length) {
-            nextChar = Buffer[index + 1];
+        if (p + 1 < end) {
+            nextChar = p[1];
         } else {
             nextChar = 0;
         }
 
-        if (index + 2 < Length) {
-            thirdChar = Buffer[index + 2];
+        if (p + 2 < end) {
+            thirdChar = p[2];
         } else {
             thirdChar = 0;
         }
 
-        if (index + 3 < Length) {
-            fourthChar = Buffer[index + 3];
+        if (p + 3 < end) {
+            fourthChar = p[3];
         } else {
             fourthChar = 0;
         }
 
         //
-        // Handle CR and LF as line terminators, merge CRLF into a single
-        // logical newline.
+        // Newline handling with CRLF merge.
         //
         if (currentChar == CARRIAGE_RETURN || currentChar == LINE_FEED) {
 
             if (previousWasCR && currentChar == LINE_FEED) {
                 previousWasCR = FALSE;
+                p += 1;
                 continue;
             }
 
@@ -4999,8 +5021,9 @@ RevCountLinesXmlStyle(
             sawComment = FALSE;
             sawNonWhitespace = FALSE;
 
-            previousWasCR = (currentChar == CARRIAGE_RETURN);
+            previousWasCR = currentChar == CARRIAGE_RETURN;
 
+            p += 1;
             continue;
         }
 
@@ -5010,10 +5033,10 @@ RevCountLinesXmlStyle(
             sawNonWhitespace = TRUE;
         }
 
-        //
-        // Inside an XML block comment: <!-- ... -->
-        //
         if (inBlockComment) {
+            //
+            // Inside "<!-- ... -->".
+            //
             sawComment = TRUE;
 
             if (currentChar == '-' &&
@@ -5021,18 +5044,16 @@ RevCountLinesXmlStyle(
                 thirdChar == '>') {
 
                 inBlockComment = FALSE;
-
-                //
-                // Consume "-->"
-                //
-                index += 2;
+                p += 3;
+            } else {
+                p += 1;
             }
 
             continue;
         }
 
         //
-        // Start of XML block comment: <!--
+        // Not in a block comment. Look for the start of "<!--".
         //
         if (currentChar == '<' &&
             nextChar == '!' &&
@@ -5041,25 +5062,22 @@ RevCountLinesXmlStyle(
 
             inBlockComment = TRUE;
             sawComment = TRUE;
-
-            //
-            // Skip "!--"
-            //
-            index += 3;
+            p += 4;
             continue;
         }
 
         //
-        // Any other non-whitespace character outside comments
-        // is treated as code (markup or text).
+        // Anything else non-whitespace outside comments is code.
         //
         if (!isspace((UCHAR)currentChar)) {
             sawCode = TRUE;
         }
+
+        p += 1;
     }
 
     //
-    // Handle the final line when the file does not end with a newline.
+    // Last line without terminating newline.
     //
     RevMaybeClassifyLastLine(sawNonWhitespace,
                              sawCode,
