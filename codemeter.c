@@ -152,6 +152,17 @@ typedef struct REVISION_CONFIG {
      * of processors is used.
      */
     ULONG WorkerThreadCount;
+
+    /**
+     * Maximum number of file work items that may be queued in a backend
+     * at any given time.
+     *
+     * If zero, a backend-specific default is used.
+     *
+     * For the thread-pool backend, the default is a small multiple of the
+     * worker thread count (currently: max(64, WorkerThreadCount * 8)).
+     */
+    ULONG MaxQueuedWorkItems;
 } REVISION_CONFIG, *PREVISION_CONFIG;
 
 /**
@@ -392,6 +403,20 @@ typedef struct REVISION_THREAD_POOL_BACKEND_CONTEXT {
     PREVISION_THREAD_POOL_WORK_ITEM WorkTail;
 
     /**
+     * Current number of work items in the queue.
+     *
+     * This tracks only items that are still in the queue, not those
+     * currently being processed by workers.
+     */
+    ULONG QueueLength;
+
+    /**
+     * Maximum number of work items allowed in the queue before producers
+     * block.
+     */
+    ULONG MaxQueueLength;
+
+    /**
      * Protects the work queue and related state.
      *
      * @remark The backend's work queue is single-queue/single-lock;
@@ -404,6 +429,11 @@ typedef struct REVISION_THREAD_POOL_BACKEND_CONTEXT {
      * Signals that the work queue is not empty.
      */
     CONDITION_VARIABLE QueueNotEmpty;
+
+    /**
+     * Signals that the work queue has available capacity.
+     */
+    CONDITION_VARIABLE QueueNotFull;
 
     /**
      * Signals that the work queue is fully drained and no workers are active.
@@ -587,6 +617,8 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
 //
 
 #define EXTENSION_HASH_BUCKET_COUNT 2048u
+
+#define MAX_QUEUE_LENGTH_FLOOR    64
 
 /**
  * Maximum length (in characters) of an extension key we support.
@@ -2906,6 +2938,18 @@ RevThreadPoolWorkerThread(
             context->WorkTail = NULL;
         }
 
+        //
+        // Update the queue length and, if we just went below the
+        // high watermark, wake any producer waiting for space.
+        //
+        if (context->QueueLength > 0) {
+            context->QueueLength -= 1;
+
+            if (context->QueueLength == context->MaxQueueLength - 1) {
+                WakeConditionVariable(&context->QueueNotFull);
+            }
+        }
+
         context->ActiveWorkers += 1;
 
         LeaveCriticalSection(&context->QueueLock);
@@ -2964,6 +3008,7 @@ RevThreadPoolBackendInitialize(
     ULONG desiredThreads;
     ULONG index;
     PREVISION_THREAD_POOL_BACKEND_CONTEXT context = NULL;
+    ULONG maxQueued;
 
     if (Revision == NULL) {
         return REV_STATUS_INVALID_ARGUMENT;
@@ -3016,10 +3061,41 @@ RevThreadPoolBackendInitialize(
 
     InitializeCriticalSection(&context->QueueLock);
     InitializeConditionVariable(&context->QueueNotEmpty);
+    InitializeConditionVariable(&context->QueueNotFull);
     InitializeConditionVariable(&context->QueueDrained);
 
     context->WorkHead = NULL;
     context->WorkTail = NULL;
+    context->QueueLength = 0;
+
+    //
+    // Determine the maximum queue length. If the caller provided an
+    // explicit limit in the revision config, honor it. Otherwise, use
+    // a conservative default: a small multiple of the worker thread
+    // count, with a minimum floor.
+    //
+
+    maxQueued = Revision->Config.MaxQueuedWorkItems;
+
+    if (maxQueued == 0) {
+
+        //
+        // Allow some slack per worker so they don't starve
+        // but keep the queue bounded.
+        //
+        maxQueued = desiredThreads * 8;
+
+        //
+        // Ensure a sensible minimum even if the thread count is
+        // very small (e.g., 1).
+        //
+        if (maxQueued < MAX_QUEUE_LENGTH_FLOOR) {
+            maxQueued = MAX_QUEUE_LENGTH_FLOOR;
+        }
+    }
+
+    context->MaxQueueLength = maxQueued;
+
     context->StopEnqueuing = FALSE;
     context->ActiveWorkers = 0;
 
@@ -3135,7 +3211,8 @@ RevThreadPoolBackendSubmitFile(
     workItem->Next = NULL;
 
     //
-    // Enqueue the work item at the tail of the queue.
+    // Enqueue the work item at the tail of the queue, applying simple
+    // backpressure when the queue is "too full".
     //
     EnterCriticalSection(&context->QueueLock);
 
@@ -3151,6 +3228,31 @@ RevThreadPoolBackendSubmitFile(
         return REV_STATUS_THREADPOOL_SUBMIT_FAILED;
     }
 
+    //
+    // Backpressure: while the queue length is at or above the configured
+    // maximum, wait until a worker consumes some work or the backend
+    // transitions to shut down.
+    //
+    while (!context->StopEnqueuing &&
+           context->QueueLength >= context->MaxQueueLength) {
+
+        SleepConditionVariableCS(&context->QueueNotFull,
+                                 &context->QueueLock,
+                                 INFINITE);
+    }
+
+    if (context->StopEnqueuing) {
+
+        LeaveCriticalSection(&context->QueueLock);
+        free(pathCopy);
+        free(workItem);
+
+        return REV_STATUS_THREADPOOL_SUBMIT_FAILED;
+    }
+
+    //
+    // Actually enqueue the work item.
+    //
     if (context->WorkTail == NULL) {
         context->WorkHead = workItem;
         context->WorkTail = workItem;
@@ -3159,6 +3261,8 @@ RevThreadPoolBackendSubmitFile(
         context->WorkTail->Next = workItem;
         context->WorkTail = workItem;
     }
+
+    context->QueueLength += 1;
 
     //
     // Signal one waiting worker that work is now available.
