@@ -2328,7 +2328,7 @@ RevInitializeExtensionHashTable(
  */
 _Must_inspect_result_
 static
-BOOL
+REV_STATUS
 RevConvertUtf16FileBufferToUtf8(
     _Inout_ PFILE_BUFFER_VIEW View,
     _In_ DWORD BytesRead,
@@ -2341,15 +2341,15 @@ RevConvertUtf16FileBufferToUtf8(
     SIZE_T wcharCount;
     const UCHAR *rawBytes = NULL;
     const WCHAR *inputWide = NULL;
-    WCHAR *allocatedWide = NULL;
+    PWCHAR allocatedWide = NULL;
     int requiredUtf8Bytes = 0;
-    CHAR *utf8Buffer = NULL;
+    PCHAR utf8Buffer = NULL;
     SIZE_T index;
 
     if (View == NULL || View->Buffer == NULL) {
         RevLogError("RevConvertUtf16FileBufferToUtf8 received "
                     "invalid parameters.");
-        return FALSE;
+        return REV_STATUS_INVALID_ARGUMENT;
     }
 
     if (BytesRead <= bomSize) {
@@ -2362,7 +2362,7 @@ RevConvertUtf16FileBufferToUtf8(
         View->DataLength = 0;
         View->IsText = TRUE;
 
-        return TRUE;
+        return REV_STATUS_SUCCESS;
     }
 
     utf16ByteLength = BytesRead - (DWORD)bomSize;
@@ -2380,7 +2380,7 @@ RevConvertUtf16FileBufferToUtf8(
         View->ContentLength = 0;
         View->IsText = FALSE;
 
-        return TRUE;
+        return REV_STATUS_SUCCESS;
     }
 
     wcharCount = utf16ByteLength / sizeof(WCHAR);
@@ -2396,7 +2396,7 @@ RevConvertUtf16FileBufferToUtf8(
         View->ContentOffset = 0;
         View->ContentLength = 0;
         View->IsText = FALSE;
-        return TRUE;
+        return REV_STATUS_SUCCESS;
     }
 
     rawBytes = (const UCHAR *)View->Buffer;
@@ -2418,7 +2418,7 @@ RevConvertUtf16FileBufferToUtf8(
             RevLogError(
                 "Failed to allocate %Iu bytes for UTF-16 to UTF-8 conversion.",
                 wcharCount * sizeof(WCHAR));
-            return FALSE;
+            return REV_STATUS_OUT_OF_MEMORY;
         }
 
         for (index = 0; index < wcharCount; index += 1) {
@@ -2450,7 +2450,7 @@ RevConvertUtf16FileBufferToUtf8(
             free(allocatedWide);
         }
 
-        return FALSE;
+        return REV_STATUS_UTF16_TO_UTF8_FAILED;
     }
 
     utf8Buffer = (PCHAR)malloc((SIZE_T)requiredUtf8Bytes);
@@ -2465,7 +2465,7 @@ RevConvertUtf16FileBufferToUtf8(
             free(allocatedWide);
         }
 
-        return FALSE;
+        return REV_STATUS_OUT_OF_MEMORY;
     }
 
     if (WideCharToMultiByte(CP_UTF8,
@@ -2486,7 +2486,7 @@ RevConvertUtf16FileBufferToUtf8(
             free(allocatedWide);
         }
 
-        return FALSE;
+        return REV_STATUS_UTF16_TO_UTF8_FAILED;
     }
 
     if (allocatedWide != NULL) {
@@ -2505,7 +2505,7 @@ RevConvertUtf16FileBufferToUtf8(
     View->ContentLength = (DWORD)requiredUtf8Bytes;
     View->IsText = TRUE;
 
-    return TRUE;
+    return REV_STATUS_SUCCESS;
 }
 
 /**
