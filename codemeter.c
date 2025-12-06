@@ -588,17 +588,6 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
  */
 #define MAX_EXTENSION_CCH   64
 
-
-/**
- * The string to be prepended to a path to avoid the MAX_PATH limitation.
- */
-#define MAX_PATH_FIX    L"\\\\?\\"
-
-/**
- * The string to be appended to a path to indicate all of its contents.
- */
-#define ASTERISK    L"\\*"
-
 #define CARRIAGE_RETURN '\r'
 #define LINE_FEED       '\n'
 
@@ -1696,24 +1685,6 @@ RevGetLastKnownWin32Error(
     VOID
     );
 
-_Ret_maybenull_
-_Must_inspect_result_
-static
-PWCHAR
-RevStringAppend(
-    _In_z_ PWCHAR String1,
-    _In_z_ PWCHAR String2
-    );
-
-_Ret_maybenull_
-_Must_inspect_result_
-static
-PWCHAR
-RevStringPrepend(
-    _In_z_ PWCHAR String1,
-    _In_z_ PWCHAR String2
-    );
-
 static
 FORCEINLINE
 ULONG
@@ -2231,144 +2202,6 @@ RevGetLastKnownWin32Error(
     }
 
     return messageBuffer;
-}
-
-/**
- * @brief This function appends one unicode string to another and returns
- * the result.
- *
- * @param String1 The first string (to which String2 will be appended).
- *
- * @param String2 The second string (to be appended to String1).
- *
- * @return A new string containing the concatenation of String1 and
- * String2. NULL if the function failed.
- *
- * @remarks The caller is responsible for freeing the memory.
- */
-_Ret_maybenull_
-_Must_inspect_result_
-static
-PWCHAR
-RevStringAppend(
-    _In_z_ PWCHAR String1,
-    _In_z_ PWCHAR String2
-    )
-{
-    SIZE_T string1Length;
-    SIZE_T string2Length;
-    SIZE_T resultStringLength;
-    PWCHAR result;
-
-    /*
-     * Find the length of the result string.
-     */
-    string1Length = wcslen(String1);
-    string2Length = wcslen(String2);
-    resultStringLength = string1Length + string2Length + 1;
-
-    /*
-     * Allocate buffer for the new string.
-     */
-    result = (PWCHAR) malloc(resultStringLength * sizeof(WCHAR));
-    if (result == NULL) {
-        RevLogError("Failed to allocate string buffer (%llu bytes).",
-                    resultStringLength * sizeof(WCHAR));
-        goto Exit;
-    }
-
-    /*
-     * Copy the first string to the result.
-     */
-    if (wcscpy_s(result, resultStringLength, String1) != 0) {
-        free(result);
-        result = NULL;
-        goto Exit;
-    }
-
-    /*
-     * Concatenate the second string to the result.
-     */
-    if (wcscat_s(result, resultStringLength, String2) != 0) {
-        free(result);
-        result = NULL;
-        goto Exit;
-    }
-
-Exit:
-    return result;
-}
-
-/**
- * @brief This function prepends one unicode string to another and
- * returns the result.
- *
- * @param String1 Supplies the first string (to be appended to).
- *
- * @param String2 Supplies the second string (to be prepended).
- *
- * @return A new string containing the concatenation of String1 and
- * String2. NULL if the function failed.
- *
- * @remarks N.B. The caller is responsible for freeing the memory.
- */
-_Ret_maybenull_
-_Must_inspect_result_
-static
-PWCHAR
-RevStringPrepend(
-    _In_z_ PWCHAR String1,
-    _In_z_ PWCHAR String2
-    )
-{
-    SIZE_T string1Length;
-    SIZE_T string2Length;
-    SIZE_T resultStringLength;
-    PWCHAR result;
-
-    if (String1 == NULL || String2 == NULL) {
-        RevLogError("Invalid parameter/-s.");
-        result = NULL;
-        goto Exit;
-    }
-
-    /*
-     * Find the length of the result string.
-     */
-    string1Length = wcslen(String1);
-    string2Length = wcslen(String2);
-    resultStringLength = string1Length + string2Length + 1;
-
-    /*
-     * Allocate buffer for the new string.
-     */
-    result = (PWCHAR) malloc(resultStringLength * sizeof(WCHAR));
-    if (result == NULL) {
-        RevLogError("Failed to allocate string buffer (%llu bytes).",
-                    resultStringLength * sizeof(WCHAR));
-        goto Exit;
-    }
-
-    /*
-     * Copy the second string to the beginning of the result.
-     */
-    if (wcscpy_s(result, resultStringLength, String2) != 0) {
-        free(result);
-        result = NULL;
-        goto Exit;
-    }
-
-    /*
-     * Concatenate the first string to the result.
-     */
-    if (wcscat_s(result, resultStringLength, String1) != 0) {
-        free(result);
-        result = NULL;
-        goto Exit;
-    }
-
-Exit:
-    return result;
 }
 
 /**
