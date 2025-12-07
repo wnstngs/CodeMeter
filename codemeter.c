@@ -4132,9 +4132,6 @@ RevMapExtensionToLanguage(
 /**
  * @brief Resolves or lazily creates a REVISION_RECORD for a given extension.
  *
- * This helper combines extension-to-language mapping, lazy record allocation,
- * and pointer caching on the corresponding mapping entry.
- *
  * The function is thread-safe and may be called on any worker thread.
  * It uses RevisionState->StatsLock only when a new record must be created
  * or when searching the list for an existing record.
@@ -4344,14 +4341,27 @@ RevEnumerateDirectoryWithVisitor(
     )
 {
     REV_STATUS status = REV_STATUS_SUCCESS;
-    REV_STATUS subStatus;
-    REV_STATUS visitorStatus;
+    REV_STATUS subStatus = REV_STATUS_SUCCESS;
+    REV_STATUS visitorStatus = REV_STATUS_SUCCESS;
     HANDLE findFile = INVALID_HANDLE_VALUE;
     WIN32_FIND_DATAW findFileData;
     PWCHAR searchPath = NULL;
+    PWCHAR subPathBuffer = NULL;
+    PWCHAR subPath = NULL;
+    SIZE_T subPathBufferLength = 0;
     SIZE_T rootLength = 0;
+    SIZE_T separatorChars = 0;
+    SIZE_T maxFileNameLength = 0;
+    SIZE_T maxSubPathLength = 0;
+    SIZE_T extraChars = 0;
+    SIZE_T searchLength = 0;
+    SIZE_T nameLength = 0;
+    SIZE_T requiredLength = 0;
+    SIZE_T bufferLength = 0;
+    WCHAR lastChar = L'\0';
     BOOL hasTrailingSeparator = FALSE;
     BOOL shouldRecurse = TRUE;
+    BOOL useTemporarySubPath = FALSE;
 
     //
     // Validate parameters.
@@ -4389,10 +4399,45 @@ RevEnumerateDirectoryWithVisitor(
     // Determine whether the root directory path already has a trailing
     // path separator.
     //
-    {
-        WCHAR lastChar = RootDirectoryPath[rootLength - 1];
-        hasTrailingSeparator = (lastChar == L'\\' || lastChar == L'/');
+    lastChar = RootDirectoryPath[rootLength - 1];
+    hasTrailingSeparator = (lastChar == L'\\' || lastChar == L'/');
+
+    //
+    // Allocate a reusable buffer for constructing full entry paths within
+    // this directory.
+    //
+    // For repositories with a very large number of small files, allocating
+    // and freeing a new buffer for each entry is expensive. Instead we
+    // allocate a single buffer sized to hold:
+    //
+    //   RootDirectoryPath [\\] FileName [NUL]
+    //
+    // and reuse it for every directory entry. If an individual entry
+    // requires more space (for example, long-path scenarios), we fall back
+    // to a one-off allocation for that entry only.
+    //
+    if (hasTrailingSeparator) {
+        separatorChars = 0;
+    } else {
+        separatorChars = 1;
     }
+
+    maxFileNameLength = (SIZE_T)(MAX_PATH - 1);
+
+    //
+    // +1 for NUL.
+    //
+    maxSubPathLength = rootLength + separatorChars + maxFileNameLength + 1;
+
+    subPathBuffer = (PWCHAR)malloc(maxSubPathLength * sizeof(WCHAR));
+
+    if (subPathBuffer == NULL) {
+        RevLogError("Failed to allocate memory for subpath buffer.");
+        status = REV_STATUS_OUT_OF_MEMORY;
+        goto Exit;
+    }
+
+    subPathBufferLength = maxSubPathLength;
 
     //
     // Build the search path used by FindFirstFileW / FindNextFileW.
@@ -4400,37 +4445,36 @@ RevEnumerateDirectoryWithVisitor(
     //   "C:\\src"   -> "C:\\src\\*"
     //   "C:\\src\\" -> "C:\\src\\*"
     //
-    {
-        //
-        // "*" or "\\*"
-        //
-        SIZE_T extraChars = 0;
-        if (hasTrailingSeparator) {
-            extraChars = 1;
-        } else {
-            extraChars = 2;
-        }
-        //
-        // +1 for NUL
-        //
-        SIZE_T searchLength = rootLength + extraChars + 1;
-
-        searchPath = (PWCHAR)malloc(searchLength * sizeof(WCHAR));
-
-        if (searchPath == NULL) {
-            RevLogError("Failed to allocate memory for search path.");
-            status = REV_STATUS_OUT_OF_MEMORY;
-            goto Exit;
-        }
-
-        wcscpy_s(searchPath, searchLength, RootDirectoryPath);
-
-        if (!hasTrailingSeparator) {
-            wcscat_s(searchPath, searchLength, L"\\");
-        }
-
-        wcscat_s(searchPath, searchLength, L"*");
+    //
+    // "*" or "\\*"
+    //
+    if (hasTrailingSeparator) {
+        extraChars = 1;
+    } else {
+        extraChars = 2;
     }
+
+    //
+    // +1 for NUL
+    //
+    searchLength = rootLength + extraChars + 1;
+
+    searchPath = (PWCHAR)malloc(searchLength * sizeof(WCHAR));
+
+    if (searchPath == NULL) {
+        RevLogError("Failed to allocate memory for search path.");
+        status = REV_STATUS_OUT_OF_MEMORY;
+        goto Exit;
+    }
+
+    wcscpy_s(searchPath, searchLength, RootDirectoryPath);
+
+    if (!hasTrailingSeparator) {
+        wcscat_s(searchPath, searchLength, L"\\");
+
+    }
+
+    wcscat_s(searchPath, searchLength, L"*");
 
     //
     // Start enumeration.
@@ -4452,7 +4496,12 @@ RevEnumerateDirectoryWithVisitor(
 
     do {
 
-        PWCHAR subPath = NULL;
+        //
+        // Reset per-iteration state so that ownership of subPath is always
+        // explicit and we never accidentally free the reusable buffer.
+        //
+        subPath = NULL;
+        useTemporarySubPath = FALSE;
 
         //
         // Skip the current directory (".") and parent directory ("..").
@@ -4467,23 +4516,33 @@ RevEnumerateDirectoryWithVisitor(
         // Build the full path to the current entry:
         //   RootDirectoryPath [\\] FileName
         //
-        {
-            SIZE_T nameLength = wcslen(findFileData.cFileName);
-            SIZE_T separatorChars;
+        nameLength = wcslen(findFileData.cFileName);
 
-            if (hasTrailingSeparator) {
-                separatorChars = 0;
-            } else {
-                separatorChars = 1;
-            }
+        if (hasTrailingSeparator) {
+            separatorChars = 0;
+        } else {
+            separatorChars = 1;
+        }
 
-            //
-            // +1 for NUL
-            //
-            SIZE_T subPathLength =
-                rootLength + separatorChars + nameLength + 1;
+        //
+        // +1 for NUL
+        //
+        requiredLength = rootLength + separatorChars + nameLength + 1;
 
-            subPath = (PWCHAR)malloc(subPathLength * sizeof(WCHAR));
+        //
+        // Prefer the reusable buffer for the common case where the full
+        // path fits; fall back to a dedicated allocation only for
+        // entries that exceed the preallocated capacity.
+        //
+        if (subPathBuffer != NULL &&
+            requiredLength <= subPathBufferLength) {
+
+            subPath = subPathBuffer;
+            bufferLength = subPathBufferLength;
+
+        } else {
+
+            subPath = (PWCHAR)malloc(requiredLength * sizeof(WCHAR));
 
             if (subPath == NULL) {
                 RevLogError("Failed to allocate memory for subpath.");
@@ -4491,14 +4550,17 @@ RevEnumerateDirectoryWithVisitor(
                 break;
             }
 
-            wcscpy_s(subPath, subPathLength, RootDirectoryPath);
-
-            if (!hasTrailingSeparator) {
-                wcscat_s(subPath, subPathLength, L"\\");
-            }
-
-            wcscat_s(subPath, subPathLength, findFileData.cFileName);
+            bufferLength = requiredLength;
+            useTemporarySubPath = TRUE;
         }
+
+        wcscpy_s(subPath, bufferLength, RootDirectoryPath);
+
+        if (!hasTrailingSeparator) {
+            wcscat_s(subPath, bufferLength, L"\\");
+        }
+
+        wcscat_s(subPath, bufferLength, findFileData.cFileName);
 
         //
         // Process the entry with the visitor.
@@ -4507,7 +4569,12 @@ RevEnumerateDirectoryWithVisitor(
 
         if (REV_FAILED(visitorStatus)) {
             status = visitorStatus;
-            free(subPath);
+
+            if (useTemporarySubPath && subPath != NULL) {
+                free(subPath);
+                subPath = NULL;
+            }
+
             break;
         }
 
@@ -4521,15 +4588,22 @@ RevEnumerateDirectoryWithVisitor(
             // Skip reparse points to avoid infinite loops.
             //
             if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+
                 RevLogWarning("Skipping reparse point: %ls", subPath);
-                free(subPath);
+
+                if (useTemporarySubPath && subPath != NULL) {
+                    free(subPath);
+                    subPath = NULL;
+                }
+
                 continue;
             }
 
             subStatus = RevEnumerateDirectoryWithVisitor(subPath,
-                Visitor,
-                Context,
-                Options);
+                                                         Visitor,
+                                                         Context,
+                                                         Options);
+
             if (REV_FAILED(subStatus)) {
 
                 RevLogError(
@@ -4540,22 +4614,28 @@ RevEnumerateDirectoryWithVisitor(
                     RevStatusToString(subStatus));
 
                 status = subStatus;
-                free(subPath);
+
+                if (useTemporarySubPath && subPath != NULL) {
+                    free(subPath);
+                    subPath = NULL;
+                }
+
                 break;
             }
         }
 
-        free(subPath);
+        if (useTemporarySubPath && subPath != NULL) {
+            free(subPath);
+            subPath = NULL;
+        }
 
     } while (FindNextFileW(findFile, &findFileData) != 0);
 
     //
     // If FindNextFileW failed for a reason other than "no more files",
-    // treat it as an error.
+    // report an error.
     //
-    if (status == REV_STATUS_SUCCESS &&
-        GetLastError() != ERROR_NO_MORE_FILES) {
-
+    if (GetLastError() != ERROR_NO_MORE_FILES) {
         RevLogError("FindNextFileW failed while enumerating directory \"%ls\". "
                     "The last known error: %ls.",
                     RootDirectoryPath,
@@ -4567,6 +4647,11 @@ Exit:
 
     if (findFile != INVALID_HANDLE_VALUE) {
         FindClose(findFile);
+    }
+
+    if (subPathBuffer != NULL) {
+        free(subPathBuffer);
+        subPathBuffer = NULL;
     }
 
     return status;
