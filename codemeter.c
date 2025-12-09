@@ -1704,16 +1704,18 @@ const REVISION_RECORD_EXTENSION_MAPPING *RevExtensionHashTable[
     EXTENSION_HASH_BUCKET_COUNT
 ];
 
-BOOL RevExtensionHashTableInitialized = FALSE;
+/**
+ * One-time initialization control for the extension hash table.
+ */
+INIT_ONCE RevExtensionHashTableInitOnce = INIT_ONCE_STATIC_INIT;
 
 /**
- * @brief The global revision state used throughout the entire program
- * run-time.
+ * The global revision state used throughout the entire program run-time.
  */
 PREVISION RevisionState = NULL;
 
 /**
- * @brief Indicates whether ANSI escape sequences are supported.
+ * Indicates whether ANSI escape sequences are supported.
  */
 BOOL SupportAnsi;
 
@@ -1739,6 +1741,15 @@ FORCEINLINE
 ULONG
 RevHashExtensionKey(
     _In_z_ PWCHAR Extension
+    );
+
+static
+BOOL
+CALLBACK
+RevInitializeExtensionHashTableCallback(
+    _Inout_ PINIT_ONCE InitOnce,
+    _Inout_opt_ PVOID Parameter,
+    _Outptr_opt_result_maybenull_ PVOID *Context
     );
 
 static
@@ -1832,6 +1843,14 @@ REV_STATUS
 RevMapExtensionToLanguage(
     _In_z_ PWCHAR Extension,
     _Outptr_result_maybenull_ PWCHAR *LanguageOrFileType
+    );
+
+_Must_inspect_result_
+static
+REV_STATUS
+RevGetOrCreateRevisionRecordByExtension(
+    _In_z_ PWCHAR Extension,
+    _Outptr_result_maybenull_ PREVISION_RECORD *RevisionRecord
     );
 
 FORCEINLINE
@@ -2294,20 +2313,33 @@ RevHashExtensionKey(
 }
 
 /**
- * This function initializes the extension hash table from the
- * ExtensionMappingTable.
+ * @brief One-time initialization callback for the extension hash table.
+ *
+ * It is invoked exactly once via InitOnceExecuteOnce(), even if multiple
+ * threads race to perform extension lookups concurrently.
+ *
+ * @param InitOnce  Supplies the one-time initialization structure.
+ * @param Parameter Reserved, unused.
+ * @param Context   Reserved, unused.
+ *
+ * @return TRUE on successful initialization; FALSE to indicate that the
+ *         table could not be initialized (callers will observe lookup
+ *         failures in that case).
  */
 static
-VOID
-RevInitializeExtensionHashTable(
-    VOID
+BOOL
+CALLBACK
+RevInitializeExtensionHashTableCallback(
+    _Inout_ PINIT_ONCE InitOnce,
+    _Inout_opt_ PVOID Parameter,
+    _Outptr_opt_result_maybenull_ PVOID *Context
     )
 {
-    ULONG i;
+    ULONG i = {0};
 
-    if (RevExtensionHashTableInitialized) {
-        return;
-    }
+    UNREFERENCED_PARAMETER(InitOnce);
+    UNREFERENCED_PARAMETER(Parameter);
+    UNREFERENCED_PARAMETER(Context);
 
     ZeroMemory((PVOID)RevExtensionHashTable, sizeof(RevExtensionHashTable));
 
@@ -2318,20 +2350,21 @@ RevInitializeExtensionHashTable(
 
         ULONG hash = RevHashExtensionKey(entry->Extension);
         ULONG bucket = hash & (EXTENSION_HASH_BUCKET_COUNT - 1);
-
         ULONG probes = 0;
 
         while (probes < EXTENSION_HASH_BUCKET_COUNT) {
 
             if (RevExtensionHashTable[bucket] == NULL) {
+
                 RevExtensionHashTable[bucket] = entry;
                 break;
             }
 
             if (_wcsicmp(RevExtensionHashTable[bucket]->Extension,
                          entry->Extension) == 0) {
+
                 //
-                // Duplicate extension in the table, keep the first mapping.
+                // Duplicate extension in the table; keep the first mapping.
                 //
                 break;
             }
@@ -2342,7 +2375,22 @@ RevInitializeExtensionHashTable(
         }
     }
 
-    RevExtensionHashTableInitialized = TRUE;
+    return TRUE;
+}
+
+/**
+ * This function ensures that the extension hash table has been initialized.
+ */
+static
+VOID
+RevInitializeExtensionHashTable(
+    VOID
+    )
+{
+    (void)InitOnceExecuteOnce(&RevExtensionHashTableInitOnce,
+                              RevInitializeExtensionHashTableCallback,
+                              NULL,
+                              NULL);
 }
 
 /**
