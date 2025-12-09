@@ -2495,7 +2495,7 @@ RevInitializeExtensionHashTable(
 _Must_inspect_result_
 static
 REV_STATUS
-    RevLookupExtensionInHashTable(
+RevLookupExtensionInHashTable(
     _In_z_ PWCHAR Extension,
     _Outptr_result_maybenull_ PREVISION_RECORD_EXTENSION_MAPPING *Mapping
     )
@@ -4602,8 +4602,12 @@ RevEnumerateDirectoryWithVisitor(
     //
     // Start enumeration.
     //
-    findFile = FindFirstFileW(searchPath,
-                              &findFileData);
+    findFile = FindFirstFileExW(searchPath,
+                                FindExInfoBasic,
+                                &findFileData,
+                                FindExSearchNameMatch,
+                                NULL,
+                                FIND_FIRST_EX_LARGE_FETCH);
 
     free(searchPath);
     searchPath = NULL;
