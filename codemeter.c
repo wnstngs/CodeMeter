@@ -3106,11 +3106,9 @@ RevThreadPoolWorkerThread(
         }
 
         //
-        // Free work item resources.
+        // Free work item resources. The file path is stored inline
+        // in the same allocation as the work item header.
         //
-        if (workItem->FilePath != NULL) {
-            free(workItem->FilePath);
-        }
         free(workItem);
 
         //
@@ -3305,9 +3303,10 @@ RevThreadPoolBackendSubmitFile(
     PREVISION_THREAD_POOL_BACKEND_CONTEXT context = NULL;
     PREVISION_THREAD_POOL_WORK_ITEM workItem = NULL;
     SIZE_T pathLengthInChars = 0;
-    PWCHAR pathCopy = NULL;
+    SIZE_T allocationSizeInBytes = 0;
+    PWCHAR pathStorage = NULL;
 
-    if (Revision == NULL || FullPath == NULL) {
+    if (Revision == NULL || FullPath == NULL || FindData == NULL) {
         return REV_STATUS_INVALID_ARGUMENT;
     }
 
@@ -3318,40 +3317,37 @@ RevThreadPoolBackendSubmitFile(
     }
 
     //
-    // Copy the path so that the work item owns its own stable string.
+    // Compute the length of the path (including the NUL terminator) and
+    // allocate a single block that holds both the work item header and
+    // an inline copy of the path string.
     //
     pathLengthInChars = wcslen(FullPath) + 1;
-    pathCopy = (PWCHAR)malloc(pathLengthInChars * sizeof(WCHAR));
 
-    if (pathCopy == NULL) {
-        RevLogError("Failed to allocate path copy for \"%ls\".", FullPath);
-        return REV_STATUS_OUT_OF_MEMORY;
-    }
+    allocationSizeInBytes = sizeof(REVISION_THREAD_POOL_WORK_ITEM) +
+                            (pathLengthInChars * sizeof(WCHAR));
 
-    memcpy(pathCopy,
-           FullPath,
-           pathLengthInChars * sizeof(WCHAR));
-
-    //
-    // Allocate and initialize the work item container.
-    //
-    workItem = (PREVISION_THREAD_POOL_WORK_ITEM)malloc(
-        sizeof(REVISION_THREAD_POOL_WORK_ITEM));
+    workItem = (PREVISION_THREAD_POOL_WORK_ITEM)malloc(allocationSizeInBytes);
 
     if (workItem == NULL) {
-        RevLogError("Failed to allocate thread pool work item.");
-        free(pathCopy);
+        RevLogError("Failed to allocate thread pool work item for \"%ls\".",
+                    FullPath);
         return REV_STATUS_OUT_OF_MEMORY;
     }
 
     ZeroMemory(workItem, sizeof(*workItem));
 
-    workItem->FilePath = pathCopy;
+    pathStorage = (PWCHAR)((PBYTE)workItem +
+                           sizeof(REVISION_THREAD_POOL_WORK_ITEM));
 
-    if (FindData != NULL) {
-        workItem->FindData = *FindData;
-    }
+    //
+    // Copy the path into the inline storage and record the pointer in FilePath.
+    //
+    memcpy(pathStorage,
+           FullPath,
+           pathLengthInChars * sizeof(WCHAR));
 
+    workItem->FilePath = pathStorage;
+    workItem->FindData = *FindData;
     workItem->Next = NULL;
 
     //
@@ -3366,7 +3362,6 @@ RevThreadPoolBackendSubmitFile(
         // Backend is shutting down; reject new work.
         //
         LeaveCriticalSection(&context->QueueLock);
-        free(pathCopy);
         free(workItem);
 
         return REV_STATUS_THREADPOOL_SUBMIT_FAILED;
@@ -3393,7 +3388,6 @@ RevThreadPoolBackendSubmitFile(
     if (context->StopEnqueuing) {
 
         LeaveCriticalSection(&context->QueueLock);
-        free(pathCopy);
         free(workItem);
 
         return REV_STATUS_THREADPOOL_SUBMIT_FAILED;
@@ -3531,14 +3525,9 @@ RevThreadPoolBackendDrainAndShutdown(
         Item->Next = NULL;
 
         //
-        // FilePath is owned by the work item and is either NULL or a heap
-        // allocation performed by RevThreadPoolBackendSubmitFile().
+        // FilePath is stored inline with the work item and does not
+        // require a separate free().
         //
-        if (Item->FilePath != NULL) {
-            free(Item->FilePath);
-            Item->FilePath = NULL;
-        }
-
         free(Item);
     }
 
