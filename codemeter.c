@@ -643,8 +643,6 @@ typedef enum CONSOLE_FOREGROUND_COLOR {
 #define CURRENT_DIR L"."
 #define PARENT_DIR  L".."
 
-#ifndef CODEMETER_ENGINE_ONLY
-
 const WCHAR WelcomeString[] =
     L"CodeMeter v0.0.1                 Copyright(c) 2023 Glebs\n"
     "--------------------------------------------------------\n\n";
@@ -670,8 +668,6 @@ const WCHAR UsageString[] =
     "\t-threads <N>\n"
     "\t    Limit the number of worker threads used by the backend.\n"
     "\t    Only meaningful for the thread pool backend.\n\n";
-
-#endif // !CODEMETER_ENGINE_ONLY
 
 /**
  * @brief This array holds ANSI escape sequences for changing text color
@@ -2275,6 +2271,92 @@ RevGetLastKnownWin32Error(
 }
 
 /**
+ * @brief Fast ASCII whitespace classifier used in tight inner loops.
+ *
+ * This helper intentionally avoids the C runtime's locale-aware isspace()
+ * to eliminate per-character locale checks (_LocaleUpdate, _chvalidator,
+ * etc.), which show up prominently in CPU profiles. For the purposes of
+ * source code line classification we only need to recognize ASCII
+ * whitespace characters.
+ *
+ * @param _Ch Supplies the character to classify.
+ *
+ * @return TRUE if _Ch is one of the standard ASCII whitespace
+ *         characters; FALSE otherwise.
+ */
+#define RevIsAsciiWhitespace(_Ch)                                              \
+    (((_Ch) == ' ')  ||                                                        \
+     ((_Ch) == '\t') ||                                                        \
+     ((_Ch) == '\n') ||                                                        \
+     ((_Ch) == '\r') ||                                                        \
+     ((_Ch) == '\f') ||                                                        \
+     ((_Ch) == '\v'))
+
+/**
+ * @brief Compares two extension keys case-insensitively using ASCII rules.
+ *
+ * This helper is specialized for the extension keys used in
+ * ExtensionMappingTable and the extension hash table. It assumes that:
+ *   - Both strings are non-NULL and NUL-terminated.
+ *   - Characters are within the ASCII range.
+ *   - Case folding only needs to handle 'A'–'Z'.
+ *
+ * @param Left Supplies the first extension key.
+ * @param Right Supplies the second extension key.
+ *
+ * @return 0 if the strings are equal ignoring ASCII case;
+ *         a negative value if Left < Right;
+ *         a positive value if Left > Right.
+ */
+static
+FORCEINLINE
+int
+RevCompareExtensionKeysInsensitive(
+    _In_z_ const WCHAR *Left,
+    _In_z_ const WCHAR *Right
+    )
+{
+    WCHAR chLeft;
+    WCHAR chRight;
+
+    assert(Left);
+    assert(Right);
+
+    if (Left == Right) {
+        return 0;
+    }
+
+    for (;;) {
+
+        chLeft = *Left++;
+        chRight = *Right++;
+
+        //
+        // Fold ASCII letters to lowercase. Extension keys in the table
+        // are ASCII-only, so no locale or full Unicode handling is needed.
+        //
+        if (chLeft >= L'A' && chLeft <= L'Z') {
+            chLeft = (WCHAR)(chLeft - L'A' + L'a');
+        }
+
+        if (chRight >= L'A' && chRight <= L'Z') {
+            chRight = (WCHAR)(chRight - L'A' + L'a');
+        }
+
+        if (chLeft != chRight) {
+            return (chLeft < chRight) ? -1 : 1;
+        }
+
+        if (chLeft == L'\0') {
+            //
+            // Both strings ended at the same position.
+            //
+            return 0;
+        }
+    }
+}
+
+/**
  * This function computes a hash code for an extension key using a simple
  * FNV-1a 32-bit hash over a lower-cased extension string.
  *
@@ -2360,8 +2442,9 @@ RevInitializeExtensionHashTableCallback(
                 break;
             }
 
-            if (_wcsicmp(RevExtensionHashTable[bucket]->Extension,
-                         entry->Extension) == 0) {
+            if (RevCompareExtensionKeysInsensitive(
+                    RevExtensionHashTable[bucket]->Extension,
+                    entry->Extension) == 0) {
 
                 //
                 // Duplicate extension in the table; keep the first mapping.
@@ -2412,7 +2495,7 @@ RevInitializeExtensionHashTable(
 _Must_inspect_result_
 static
 REV_STATUS
-RevLookupExtensionInHashTable(
+    RevLookupExtensionInHashTable(
     _In_z_ PWCHAR Extension,
     _Outptr_result_maybenull_ PREVISION_RECORD_EXTENSION_MAPPING *Mapping
     )
@@ -2444,7 +2527,8 @@ RevLookupExtensionInHashTable(
             break;
         }
 
-        if (_wcsicmp(entry->Extension, Extension) == 0) {
+        if (RevCompareExtensionKeysInsensitive(entry->Extension,
+                                               Extension) == 0) {
 
             *Mapping = (PREVISION_RECORD_EXTENSION_MAPPING)entry;
             return REV_STATUS_SUCCESS;
@@ -2459,7 +2543,9 @@ RevLookupExtensionInHashTable(
     //
     for (bucket = 0; bucket < ARRAYSIZE(ExtensionMappingTable); bucket += 1) {
 
-        if (_wcsicmp(ExtensionMappingTable[bucket].Extension, Extension) == 0) {
+        if (RevCompareExtensionKeysInsensitive(
+                ExtensionMappingTable[bucket].Extension,
+                Extension) == 0) {
 
             *Mapping = &ExtensionMappingTable[bucket];
 
@@ -5012,7 +5098,7 @@ RevCountLinesCStyle(
         //
         // Track whether this line has any non-whitespace at all.
         //
-        if (!isspace((UCHAR)currentChar)) {
+        if (!RevIsAsciiWhitespace((UCHAR)currentChar)) {
             sawNonWhitespace = TRUE;
         }
 
@@ -5112,7 +5198,7 @@ RevCountLinesCStyle(
         // Any other non-whitespace character outside comments and strings
         // is treated as code.
         //
-        if (!isspace((UCHAR)currentChar)) {
+        if (!RevIsAsciiWhitespace((UCHAR)currentChar)) {
             sawCode = TRUE;
         }
 
@@ -5223,7 +5309,7 @@ RevCountLinesLineCommentStyle(
 
         previousWasCR = FALSE;
 
-        if (!isspace((UCHAR)currentChar)) {
+        if (!RevIsAsciiWhitespace((UCHAR)currentChar)) {
             sawNonWhitespace = TRUE;
         }
 
@@ -5304,7 +5390,7 @@ RevCountLinesLineCommentStyle(
         //
         // Any other non-whitespace outside comments/strings is code.
         //
-        if (!isspace((UCHAR)currentChar)) {
+        if (!RevIsAsciiWhitespace((UCHAR)currentChar)) {
             sawCode = TRUE;
         }
 
@@ -5420,7 +5506,7 @@ RevCountLinesXmlStyle(
 
         previousWasCR = FALSE;
 
-        if (!isspace((UCHAR)currentChar)) {
+        if (!RevIsAsciiWhitespace((UCHAR)currentChar)) {
             sawNonWhitespace = TRUE;
         }
 
@@ -5460,7 +5546,7 @@ RevCountLinesXmlStyle(
         //
         // Anything else non-whitespace outside comments is code.
         //
-        if (!isspace((UCHAR)currentChar)) {
+        if (!RevIsAsciiWhitespace((UCHAR)currentChar)) {
             sawCode = TRUE;
         }
 
@@ -6022,8 +6108,6 @@ RevParseBackendKind(
     return REV_STATUS_SUCCESS;
 }
 
-#ifndef CODEMETER_ENGINE_ONLY
-
 int
 wmain(
     int argc,
@@ -6285,5 +6369,3 @@ Exit:
 
     return status;
 }
-
-#endif // !CODEMETER_ENGINE_ONLY
