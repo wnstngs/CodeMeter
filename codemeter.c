@@ -168,6 +168,12 @@ typedef struct REVISION_CONFIG {
 
 struct REVISION_RECORD;
 
+//
+// Forward declaration so REVISION_RECORD can cache the language family
+// without requiring reordering of type definitions.
+//
+enum COMMENT_STYLE_FAMILY;
+
 /**
  * This structure stores the mapping of file extensions to
  * programming languages.
@@ -210,6 +216,14 @@ typedef struct REVISION_RECORD {
      * programming language/file type based on extension.
      */
     REVISION_RECORD_EXTENSION_MAPPING ExtensionMapping;
+
+    /**
+     * Cached comment style family for this record's language.
+     *
+     * This is computed once when the record is created to avoid
+     * per-file substring scans in RevGetLanguageFamily().
+     */
+    enum COMMENT_STYLE_FAMILY CommentStyleFamily;
 
     /**
      * Number of lines in the revision record.
@@ -483,24 +497,6 @@ typedef struct FILE_LINE_STATS {
      */
     ULONGLONG CountOfLinesComment;
 } FILE_LINE_STATS, *PFILE_LINE_STATS;
-
-/**
- * @brief Per-file state for streaming line counting.
- *
- * This captures comment/string/newline state that must survive
- * across buffer boundaries.
- */
-typedef struct LINE_COUNT_STATE {
-    BOOL InBlockComment;
-    BOOL InLineComment;
-    BOOL InString;
-    BOOL EscapeInString;
-    BOOL SawCode;
-    BOOL SawComment;
-    BOOL SawNonWhitespace;
-    BOOL PreviousWasCR;
-    CHAR StringDelim;
-} LINE_COUNT_STATE, *PLINE_COUNT_STATE;
 
 /**
  * This structure describes a view over the raw file buffer that should
@@ -4081,6 +4077,7 @@ RevInitializeRevisionRecord(
     RevInitializeListHead(&revisionRecord->ListEntry);
     revisionRecord->ExtensionMapping.Extension = Extension;
     revisionRecord->ExtensionMapping.LanguageOrFileType = LanguageOrFileType;
+    revisionRecord->CommentStyleFamily = RevGetLanguageFamily(LanguageOrFileType);
     revisionRecord->CountOfLinesTotal = 0;
     revisionRecord->CountOfLinesBlank = 0;
     revisionRecord->CountOfLinesComment = 0;
@@ -5780,78 +5777,45 @@ RevReviseFile(
 {
     REV_STATUS status = REV_STATUS_SUCCESS;
     PREVISION_RECORD revisionRecord = NULL;
-    PWCHAR languageOrFileType = NULL;
-    COMMENT_STYLE_FAMILY languageFamily = LanguageFamilyUnknown;
     FILE_LINE_STATS fileLineStats = {0};
     FILE_BUFFER_VIEW view;
     WCHAR extensionBuffer[MAX_EXTENSION_CCH];
+    COMMENT_STYLE_FAMILY languageFamily = LanguageFamilyUnknown;
 
     ZeroMemory(&view, sizeof(view));
 
     if (FilePath == NULL) {
         RevLogError("FilePath is NULL.");
-        status = REV_STATUS_INVALID_ARGUMENT;
-        goto Exit;
+        return REV_STATUS_INVALID_ARGUMENT;
+    }
+
+    if (RevisionState == NULL) {
+        return REV_STATUS_ENGINE_NOT_INITIALIZED;
     }
 
     //
-    // Resolve the canonical extension key and language before reading.
-    // This ensures consistent handling of multi-dot and special whole-name
-    // mappings.
+    // Resolve the canonical extension key before reading. This ensures
+    // consistent handling of multi-dot and special whole-name mappings.
     //
-    if (REV_FAILED(RevResolveExtensionForPath(FilePath,
-                                              extensionBuffer,
-                                              ARRAYSIZE(extensionBuffer),
-                                              &languageOrFileType))) {
+    status = RevResolveExtensionForPath(FilePath,
+                                       extensionBuffer,
+                                       ARRAYSIZE(extensionBuffer),
+                                       NULL);
+
+    if (REV_FAILED(status)) {
 
         //
         // This should not normally happen because RevShouldReviseFile()
-        // filters by extension ahead of time, but we still handle it
-        // gracefully for robustness.
+        // filters by extension ahead of time.
         //
         RevLogWarning("No language mapping found for \"%ls\".", FilePath);
-        status = REV_STATUS_NO_LANGUAGE_MAPPING;
-        goto UpdateStats;
-    }
-
-    languageFamily = RevGetLanguageFamily(languageOrFileType);
-
-    //
-    // Read the file into a buffer view.
-    //
-    status = RevReadFileIntoBufferView(FilePath, &view);
-
-    if (REV_FAILED(status)) {
-        //
-        // Errors already logged by the helper. Do not propagate as fatal
-        // for the entire revision; behave like a per-file failure.
-        //
-        goto UpdateStats;
+        return status;
     }
 
     //
-    // If the content is recognized as text and there is something to
-    // revise, count lines.
+    // Resolve or create the revision record for this extension, then reuse
+    // its cached language family for comment parsing.
     //
-    if (view.IsText && view.ContentLength > 0) {
-
-        RevCountLinesWithFamily(view.Buffer + view.ContentOffset,
-                                view.ContentLength,
-                                languageFamily,
-                                &fileLineStats);
-    }
-
-UpdateStats:
-
-    if (RevisionState == NULL) {
-        status = REV_STATUS_ENGINE_NOT_INITIALIZED;
-        goto Exit;
-    }
-
-    //
-    // Resolve or create the revision record for this extension.
-    //
-
     status = RevGetOrCreateRevisionRecordByExtension(extensionBuffer,
                                                      &revisionRecord);
 
@@ -5859,10 +5823,6 @@ UpdateStats:
 
         if (status == REV_STATUS_NO_LANGUAGE_MAPPING) {
 
-            //
-            // This should not normally happen because RevShouldReviseFile()
-            // filters by extension ahead of time.
-            //
             RevLogWarning("No language mapping found for \"%ls\".",
                           FilePath);
 
@@ -5875,7 +5835,29 @@ UpdateStats:
                         RevStatusToString(status));
         }
 
-        goto Exit;
+        return status;
+    }
+
+    languageFamily = revisionRecord->CommentStyleFamily;
+
+    //
+    // Read the file into a buffer view.
+    //
+    status = RevReadFileIntoBufferView(FilePath, &view);
+
+    if (REV_SUCCEEDED(status)) {
+
+        //
+        // If the content is recognized as text and there is something to
+        // revise, count lines.
+        //
+        if (view.IsText && view.ContentLength > 0) {
+
+            RevCountLinesWithFamily(view.Buffer + view.ContentOffset,
+                                    view.ContentLength,
+                                    languageFamily,
+                                    &fileLineStats);
+        }
     }
 
     //
@@ -5883,8 +5865,6 @@ UpdateStats:
     //
     RevAccumulateRevisionRecordStats(revisionRecord, &fileLineStats);
     RevAccumulateGlobalRevisionStats(RevisionState, &fileLineStats);
-
-Exit:
 
     if (view.Buffer != NULL) {
         free(view.Buffer);
