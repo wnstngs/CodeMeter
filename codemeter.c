@@ -485,6 +485,24 @@ typedef struct FILE_LINE_STATS {
 } FILE_LINE_STATS, *PFILE_LINE_STATS;
 
 /**
+ * @brief Per-file state for streaming line counting.
+ *
+ * This captures comment/string/newline state that must survive
+ * across buffer boundaries.
+ */
+typedef struct LINE_COUNT_STATE {
+    BOOL InBlockComment;
+    BOOL InLineComment;
+    BOOL InString;
+    BOOL EscapeInString;
+    BOOL SawCode;
+    BOOL SawComment;
+    BOOL SawNonWhitespace;
+    BOOL PreviousWasCR;
+    CHAR StringDelim;
+} LINE_COUNT_STATE, *PLINE_COUNT_STATE;
+
+/**
  * This structure describes a view over the raw file buffer that should
  * be used for line counting.
  */
@@ -1725,6 +1743,14 @@ RevStatusToString(
     REV_STATUS Status
     );
 
+_Must_inspect_result_
+static
+REV_STATUS
+RevWaitForAllHandles(
+    _In_reads_(HandleCount) const HANDLE *Handles,
+    _In_ ULONG HandleCount
+    );
+
 _Ret_notnull_
 static
 PWCHAR
@@ -2224,6 +2250,64 @@ RevLogStatusError(
                 Message,
                 (int)Status,
                 RevStatusToString(Status));
+}
+
+
+/**
+ * @brief Waits for all thread handles in the given array.
+ *
+ * This is a small wrapper around WaitForMultipleObjects() that supports
+ * joining more than MAXIMUM_WAIT_OBJECTS handles by waiting in batches.
+ *
+ * @param Handles
+ *      Array of handles to wait on.
+ *
+ * @param HandleCount
+ *      Number of handles in Handles.
+ *
+ * @return
+ *      REV_STATUS_SUCCESS on success; REV_STATUS_UNEXPECTED_ERROR if the
+ *      underlying wait fails.
+ */
+_Must_inspect_result_
+static
+REV_STATUS
+RevWaitForAllHandles(
+    _In_reads_(HandleCount) const HANDLE *Handles,
+    _In_ ULONG HandleCount
+    )
+{
+    ULONG offset = 0;
+
+    if (Handles == NULL) {
+        return REV_STATUS_INVALID_ARGUMENT;
+    }
+
+    while (offset < HandleCount) {
+
+        ULONG batchCount = HandleCount - offset;
+        DWORD waitResult;
+
+        if (batchCount > MAXIMUM_WAIT_OBJECTS) {
+            batchCount = MAXIMUM_WAIT_OBJECTS;
+        }
+
+        waitResult = WaitForMultipleObjects(batchCount,
+                                            &Handles[offset],
+                                            TRUE,
+                                            INFINITE);
+
+        if (waitResult == WAIT_FAILED) {
+            RevLogError("WaitForMultipleObjects failed while joining worker "
+                        "threads. Error: %ls.",
+                        RevGetLastKnownWin32Error());
+            return REV_STATUS_UNEXPECTED_ERROR;
+        }
+
+        offset += batchCount;
+    }
+
+    return REV_STATUS_SUCCESS;
 }
 
 /**
@@ -3521,6 +3605,7 @@ RevThreadPoolBackendDrainAndShutdown(
     _Inout_ PREVISION Revision
     )
 {
+    REV_STATUS status = REV_STATUS_SUCCESS;
     PREVISION_THREAD_POOL_BACKEND_CONTEXT Context = NULL;
     ULONG Index;
 
@@ -3568,10 +3653,8 @@ RevThreadPoolBackendDrainAndShutdown(
     if (Context->WorkerThreadCount > 0 && 
         Context->WorkerThreads != NULL) {
 
-        WaitForMultipleObjects(Context->WorkerThreadCount,
-                               Context->WorkerThreads,
-                               TRUE,
-                               INFINITE);
+        status = RevWaitForAllHandles(Context->WorkerThreads,
+                                      Context->WorkerThreadCount);
 
         for (Index = 0; Index < Context->WorkerThreadCount; Index += 1) {
 
@@ -3636,7 +3719,7 @@ RevThreadPoolBackendDrainAndShutdown(
 
     Revision->BackendContext = NULL;
 
-    return REV_STATUS_SUCCESS;
+    return status;
 }
 
 /**
