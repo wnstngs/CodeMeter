@@ -1720,6 +1720,18 @@ const REVISION_RECORD_EXTENSION_MAPPING *RevExtensionHashTable[
 INIT_ONCE RevExtensionHashTableInitOnce = INIT_ONCE_STATIC_INIT;
 
 /**
+ * Indicates whether the extension hash table is complete.
+ *
+ * If TRUE, every mapping entry from ExtensionMappingTable was successfully
+ * inserted into RevExtensionHashTable and lookups can rely solely on the
+ * hash table.
+ *
+ * If FALSE, callers may fall back to a linear scan (rare; indicates the
+ * table could not represent all mappings due to bucket exhaustion).
+ */
+BOOL RevExtensionHashTableComplete = FALSE;
+
+/**
  * The global revision state used throughout the entire program run-time.
  */
 PREVISION RevisionState = NULL;
@@ -2505,6 +2517,12 @@ RevInitializeExtensionHashTableCallback(
 
     ZeroMemory((PVOID)RevExtensionHashTable, sizeof(RevExtensionHashTable));
 
+    //
+    // Optimistically assume the table will be complete; mark it FALSE if any
+    // entry cannot be inserted due to bucket exhaustion.
+    //
+    RevExtensionHashTableComplete = TRUE;
+
     for (i = 0; i < ARRAYSIZE(ExtensionMappingTable); i += 1) {
 
         const REVISION_RECORD_EXTENSION_MAPPING *entry =
@@ -2513,12 +2531,14 @@ RevInitializeExtensionHashTableCallback(
         ULONG hash = RevHashExtensionKey(entry->Extension);
         ULONG bucket = hash & (EXTENSION_HASH_BUCKET_COUNT - 1);
         ULONG probes = 0;
+        BOOL inserted = FALSE;
 
         while (probes < EXTENSION_HASH_BUCKET_COUNT) {
 
             if (RevExtensionHashTable[bucket] == NULL) {
 
                 RevExtensionHashTable[bucket] = entry;
+                inserted = TRUE;
                 break;
             }
 
@@ -2529,12 +2549,17 @@ RevInitializeExtensionHashTableCallback(
                 //
                 // Duplicate extension in the table; keep the first mapping.
                 //
+                inserted = TRUE;
                 break;
             }
 
             bucket = (bucket + 1) & (EXTENSION_HASH_BUCKET_COUNT - 1);
 
             probes += 1;
+        }
+
+        if (inserted == FALSE) {
+            RevExtensionHashTableComplete = FALSE;
         }
     }
 
@@ -2619,17 +2644,22 @@ RevLookupExtensionInHashTable(
     }
 
     //
-    // Fallback: linear scan if no entry was found in the hash table.
+    // Fallback: linear scan only if the hash table is known to be incomplete.
     //
-    for (bucket = 0; bucket < ARRAYSIZE(ExtensionMappingTable); bucket += 1) {
+    if (!RevExtensionHashTableComplete) {
 
-        if (RevCompareExtensionKeysInsensitive(
-                ExtensionMappingTable[bucket].Extension,
-                Extension) == 0) {
+        for (bucket = 0;
+             bucket < ARRAYSIZE(ExtensionMappingTable);
+             bucket += 1) {
 
-            *Mapping = &ExtensionMappingTable[bucket];
+            if (RevCompareExtensionKeysInsensitive(
+                    ExtensionMappingTable[bucket].Extension,
+                    Extension) == 0) {
 
-            return REV_STATUS_SUCCESS;
+                *Mapping = &ExtensionMappingTable[bucket];
+
+                return REV_STATUS_SUCCESS;
+            }
         }
     }
 
