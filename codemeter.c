@@ -4487,7 +4487,7 @@ RevGetOrCreateRevisionRecordByExtension(
     //
     // No existing record for this language; initialize a new one.
     //
-    existingRecord = RevInitializeRevisionRecord(Extension,
+    existingRecord = RevInitializeRevisionRecord(mapping->Extension,
                                                  languageOrFileType);
 
     if (existingRecord == NULL) {
